@@ -52,6 +52,7 @@ def test_http_client_loggers_do_not_echo_request_urls():
     (ef.verify_reoon, {"status": "safe", "is_catch_all": False}),
     (ef.verify_zerobounce, {"status": "valid", "sub_status": ""}),
     (ef.verify_hunter, {"data": {"status": "valid", "accept_all": False}}),
+    (ef.verify_email_check, {"validFormat": True, "validMx": True, "validSmtp": True}),
 ])
 async def test_a_verifier_call_does_not_log_the_key(monkeypatch, caplog, verify, body):
     transport = _mock_client(monkeypatch, body)
@@ -77,6 +78,16 @@ async def test_hunter_sends_the_key_in_a_header_not_the_url(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_email_check_sends_the_key_in_a_header_not_the_url(monkeypatch):
+    transport = _mock_client(monkeypatch, {"validFormat": True, "validMx": True, "validSmtp": True})
+    await ef.verify_email_check("pat@example.com", KEY)
+    assert len(transport.requests) == 1
+    request = transport.requests[0]
+    assert KEY not in str(request.url)
+    assert request.headers.get("x-api-key") == KEY
+
+
+@pytest.mark.asyncio
 async def test_a_failed_request_is_logged_without_the_key(monkeypatch, caplog):
     async def boom(self, request):
         raise httpx.ConnectError(f"could not reach {request.url}", request=request)
@@ -86,5 +97,6 @@ async def test_a_failed_request_is_logged_without_the_key(monkeypatch, caplog):
     caplog.set_level(logging.DEBUG)
     assert await ef.verify_reoon("pat@example.com", KEY) is None
     assert await ef.verify_zerobounce("pat@example.com", KEY) is None
+    assert await ef.verify_email_check("pat@example.com", KEY) is None
     assert "failed" in caplog.text
     assert KEY not in caplog.text

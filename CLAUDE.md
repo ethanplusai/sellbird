@@ -92,6 +92,7 @@ INSTANTLY_API_KEY=
 # --- Email verification (add at least one; else emails stay 'guess') ---
 REOON_API_KEY=              # 600 free/mo — best free tier
 ZEROBOUNCE_API_KEY=         # 100 free/mo — best for M365/Workspace catch-alls
+EMAIL_CHECK_API_KEY=        # email-check.app — MX + SMTP check
 HUNTER_API_KEY=             # 50 free/mo + pattern lookup
 
 # --- Discovery (optional — the free OpenStreetMap source needs no key) ---

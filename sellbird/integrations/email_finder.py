@@ -582,6 +582,47 @@ async def verify_zerobounce(email: str, api_key: str) -> Optional[dict]:
     return {"status": status, "catch_all": sub == "catch-all" or status == "catch-all"}
 
 
+async def verify_email_check(email: str, api_key: str) -> Optional[dict]:
+    """Email-Check.app single-address validation (MX + SMTP check).
+
+    The key travels in the ``x-api-key`` header, so it never enters a URL.
+    Returns {'status': ..., 'catch_all': bool} or None if unavailable (HTTP
+    error, bad JSON, an ``error`` body such as no credits left).
+    ``validSmtp`` is null when the mail server wouldn't say, which stays
+    inconclusive ("unknown"); an accept-all domain is reported through
+    ``smtpDebug.isCatchAll`` and is only trusted on a mailbox it accepted.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=API_TIMEOUT) as client:
+            resp = await client.get(
+                "https://api.email-check.app/v1-get-email-details",
+                params={"email": email, "verifyMx": "true", "verifySmtp": "true",
+                        "timeout": 8000},
+                headers={"x-api-key": api_key},
+            )
+    except httpx.HTTPError as e:
+        logger.debug(f"Email-Check request failed for {email}: {_redact(e, api_key)}")
+        return None
+    if resp.status_code != 200:
+        return None
+    try:
+        data = resp.json()
+    except ValueError:
+        return None
+    if not isinstance(data, dict) or data.get("error"):
+        return None
+    if data.get("validFormat") is False or data.get("validMx") is False:
+        return {"status": "invalid", "catch_all": False}
+    if data.get("isDisposable") is True:
+        return {"status": "disposable", "catch_all": False}
+    smtp_ok = data.get("validSmtp")
+    if smtp_ok is False:
+        return {"status": "invalid", "catch_all": False}
+    smtp = data.get("smtpDebug")
+    catch_all = isinstance(smtp, dict) and smtp.get("isCatchAll") is True
+    return {"status": "valid" if smtp_ok is True else "unknown", "catch_all": catch_all}
+
+
 async def verify_hunter(email: str, api_key: str) -> Optional[dict]:
     try:
         async with httpx.AsyncClient(timeout=API_TIMEOUT) as client:
@@ -673,18 +714,21 @@ async def _verify_candidate(email: str, mx_type: str, env) -> tuple[Optional[str
     """
     reoon_key = getattr(env, "reoon_api_key", "") if env else ""
     zerobounce_key = getattr(env, "zerobounce_api_key", "") if env else ""
+    email_check_key = getattr(env, "email_check_api_key", "") if env else ""
     hunter_key = _hunter_api_key()
 
     catch_all_seen = False
 
     # Big providers: ZeroBounce first (its engine cracks their catch-alls),
-    # then Reoon, then Hunter. SMTP is useless/misleading here.
+    # then Reoon, then Email-Check, then Hunter. SMTP is useless/misleading here.
     if mx_type in ("google", "microsoft", "gateway"):
         channels = []
         if zerobounce_key:
             channels.append(lambda: verify_zerobounce(email, zerobounce_key))
         if reoon_key:
             channels.append(lambda: verify_reoon(email, reoon_key))
+        if email_check_key:
+            channels.append(lambda: verify_email_check(email, email_check_key))
         if hunter_key:
             channels.append(lambda: verify_hunter(email, hunter_key))
         for channel in channels:
@@ -698,9 +742,11 @@ async def _verify_candidate(email: str, mx_type: str, env) -> tuple[Optional[str
                 return status, catch_all_seen
         return None, catch_all_seen
 
-    # Small / self-hosted: Reoon → SMTP (still works here) → Hunter.
-    if reoon_key:
-        verdict = await verify_reoon(email, reoon_key)
+    # Small / self-hosted: Reoon → Email-Check → SMTP (still works here) → Hunter.
+    for key, verify in ((reoon_key, verify_reoon), (email_check_key, verify_email_check)):
+        if not key:
+            continue
+        verdict = await verify(email, key)
         if verdict:
             if verdict.get("catch_all"):
                 catch_all_seen = True

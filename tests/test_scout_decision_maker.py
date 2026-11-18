@@ -82,7 +82,7 @@ def no_network(monkeypatch):
 
     monkeypatch.setattr(ef, "get_mx_host", mx)
     monkeypatch.setattr(ef, "_hunter_api_key", lambda: "")
-    for name in ("verify_reoon", "verify_zerobounce", "verify_hunter", "verify_email_smtp",
+    for name in ("verify_reoon", "verify_zerobounce", "verify_email_check", "verify_hunter", "verify_email_smtp",
                  "_hunter_domain_pattern"):
         monkeypatch.setattr(ef, name, boom)
 

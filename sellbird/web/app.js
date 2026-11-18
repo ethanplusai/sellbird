@@ -1290,6 +1290,7 @@ async function loadSettings() {
   savedPh('instantly-key', data.instantly_api_key_set, 'Enter your Instantly API key');
   savedPh('reoon-key', data.reoon_api_key_set, '600 free/mo — reoon.com/email-verifier');
   savedPh('zerobounce-key', data.zerobounce_api_key_set, '100 free/mo — best for M365/Workspace catch-alls');
+  savedPh('email-check-key', data.email_check_api_key_set, 'email-check.app — MX + SMTP check');
   savedPh('hunter-key', data.hunter_api_key_set, '50 free/mo + email-pattern lookup');
   savedPh('linkedin-password', data.linkedin_password_set, 'Enter password');
   savedPh('cf-api-token', data.cloudflare_api_token_set, 'Your Cloudflare API Token');
@@ -1313,6 +1314,7 @@ async function loadSettings() {
   }
   tag('reoon-status', data.reoon_api_key_set, 'set');
   tag('zerobounce-status', data.zerobounce_api_key_set, 'set');
+  tag('email-check-status', data.email_check_api_key_set, 'set');
   tag('hunter-status', data.hunter_api_key_set, 'set');
 }
 
@@ -1354,9 +1356,11 @@ function saveVerifiers() {
   const payload = {};
   const r = document.getElementById('reoon-key').value;
   const z = document.getElementById('zerobounce-key').value;
+  const ec = document.getElementById('email-check-key').value;
   const h = document.getElementById('hunter-key').value;
   if (r) payload.REOON_API_KEY = r;
   if (z) payload.ZEROBOUNCE_API_KEY = z;
+  if (ec) payload.EMAIL_CHECK_API_KEY = ec;
   if (h) payload.HUNTER_API_KEY = h;
   if (!Object.keys(payload).length) { showToast('Enter at least one key first.', 'error'); return; }
   saveEnv(payload, 'Verification keys saved.').then(loadSettings);

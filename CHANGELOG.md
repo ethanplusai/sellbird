@@ -9,6 +9,13 @@ minor versions can still change behaviour.
 
 ### Added
 
+- **Email-Check.app as an email verifier.** Set `EMAIL_CHECK_API_KEY` in `.env`
+  (or in dashboard → Settings → Verifiers) and Sellbird checks each candidate
+  address's MX and mailbox with email-check.app. It sits after Reoon and
+  ZeroBounce and before Hunter (and, on small hosts, before the local SMTP
+  probe). The key goes in the `x-api-key` header, so it never appears in a URL
+  or the logs. A mailbox the server wouldn't answer for stays unverified, and
+  an accept-all domain is graded `risky`.
 - **`writer.require_tip: true` skips prospects with nothing to build a tip
   on.** A first email is meant to name one concrete thing the sender would
   change; with no finding about the company, the draft could only say it had no

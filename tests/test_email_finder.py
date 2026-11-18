@@ -33,6 +33,7 @@ class Env:
     def __init__(self, **kw):
         self.reoon_api_key = kw.get("reoon", "")
         self.zerobounce_api_key = kw.get("zerobounce", "")
+        self.email_check_api_key = kw.get("email_check", "")
 
 
 # ── pattern building / inference ──

@@ -859,6 +859,7 @@ class EnvConfig(BaseModel):
     tinyfish_api_key: str = ""
     reoon_api_key: str = ""
     zerobounce_api_key: str = ""
+    email_check_api_key: str = ""
     # Native mail providers (channels.email.provider: gmail | smtp)
     gmail_client_id: str = ""
     gmail_client_secret: str = ""
@@ -1005,6 +1006,7 @@ def load_env() -> EnvConfig:
         tinyfish_api_key=os.getenv("TINYFISH_API_KEY", "").strip(),
         reoon_api_key=os.getenv("REOON_API_KEY", "").strip(),
         zerobounce_api_key=os.getenv("ZEROBOUNCE_API_KEY", "").strip(),
+        email_check_api_key=os.getenv("EMAIL_CHECK_API_KEY", "").strip(),
         gmail_client_id=os.getenv("GMAIL_CLIENT_ID", "").strip(),
         gmail_client_secret=os.getenv("GMAIL_CLIENT_SECRET", "").strip(),
         smtp_host=os.getenv("SMTP_HOST", "").strip(),

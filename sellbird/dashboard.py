@@ -279,12 +279,12 @@ async def get_setup_status():
     })
 
     # 4. Email verification (needed for addresses to be sendable, not 'guess')
-    verifier_set = _has("REOON_API_KEY") or _has("ZEROBOUNCE_API_KEY") or _has("HUNTER_API_KEY")
+    verifier_set = _has("REOON_API_KEY") or _has("ZEROBOUNCE_API_KEY") or _has("EMAIL_CHECK_API_KEY") or _has("HUNTER_API_KEY")
     checks.append({
         "id": "verifier", "label": "Email verification key",
         "done": verifier_set,
         "required": True,
-        "help": "Add a Reoon (free 600/mo), ZeroBounce, or Hunter key in Settings — "
+        "help": "Add a Reoon (free 600/mo), ZeroBounce, Email-Check or Hunter key in Settings — "
                 "without one, found emails stay 'guess' and are never sent.",
     })
 
@@ -392,7 +392,7 @@ async def get_settings():
         "SMTP_HOST", "SMTP_PORT", "SMTP_USERNAME", "SMTP_PASSWORD",
         "IMAP_HOST", "IMAP_PORT", "IMAP_USERNAME", "IMAP_PASSWORD",
         "M365_CLIENT_ID", "M365_TENANT_ID",
-        "REOON_API_KEY", "ZEROBOUNCE_API_KEY", "HUNTER_API_KEY",
+        "REOON_API_KEY", "ZEROBOUNCE_API_KEY", "EMAIL_CHECK_API_KEY", "HUNTER_API_KEY",
     ]
     for key in all_keys:
         if key not in env_vars:
@@ -431,6 +431,7 @@ async def get_settings():
         "m365_authorized": (PROJECT_ROOT / "data" / "m365_token.json").is_file(),
         "reoon_api_key_set": is_set("REOON_API_KEY"),
         "zerobounce_api_key_set": is_set("ZEROBOUNCE_API_KEY"),
+        "email_check_api_key_set": is_set("EMAIL_CHECK_API_KEY"),
         "hunter_api_key_set": is_set("HUNTER_API_KEY"),
     }
 
@@ -452,7 +453,7 @@ async def save_env_settings(request: Request):
                      "SMTP_HOST", "SMTP_PORT", "SMTP_USERNAME", "SMTP_PASSWORD",
                      "IMAP_HOST", "IMAP_PORT", "IMAP_USERNAME", "IMAP_PASSWORD",
                      "M365_CLIENT_ID", "M365_TENANT_ID",
-                     "REOON_API_KEY", "ZEROBOUNCE_API_KEY", "HUNTER_API_KEY"]:
+                     "REOON_API_KEY", "ZEROBOUNCE_API_KEY", "EMAIL_CHECK_API_KEY", "HUNTER_API_KEY"]:
             if key in data and data[key] is not None:
                 value = data[key]
                 if isinstance(value, bool) or not isinstance(value, (str, int, float)):
