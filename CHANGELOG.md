@@ -7,6 +7,16 @@ minor versions can still change behaviour.
 
 ## [Unreleased]
 
+### Upgrading
+
+- **If you use the Precleared check, update to 0.4.0 or later.** Since 0.4.0
+  Sellbird sends the company's name with every check whenever it has one.
+  Older builds often left it out, and without it Precleared can't always find
+  a UK company on the Companies House register, so it can't rule out a sole
+  trader and holds the email as `consent_needed`. Updating means fewer UK
+  emails held for no good reason. Run `git pull` in your Sellbird folder (or
+  ask your AI to update Sellbird). Nothing to change in `sellbird.yaml`.
+
 ### Added
 
 - **`writer.require_tip: true` skips prospects with nothing to build a tip
