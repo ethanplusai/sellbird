@@ -112,8 +112,12 @@ notice, and so does switching the check off.
 | Free key | 25 |
 | Any new key, its first 14 days (counted from its first check) | 100 |
 
-Beyond that a key draws on a prepaid pack, and Sellbird shows the checkout
-link when one runs out. `sellbird precleared-key` gets a free key for your email
+Beyond that a key draws on a prepaid pack or a monthly plan. When a key runs
+out, the Today page and `sellbird status` list the ways to carry on that
+Precleared's answer offers, each with its price and checkout link: a starter
+pack for a first purchase, the monthly plan when it would cover what you send,
+a pack, and the Growth plan for a key that needs more than 100 a day. Waiting
+until the free checks reset costs nothing. `sellbird precleared-key` gets a free key for your email
 address and saves it in `.env` as `PRECLEARED_API_KEY` without showing it;
 `sellbird setup` offers the same. Precleared receives that address to make the
 key. You can also get one at

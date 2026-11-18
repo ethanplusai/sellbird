@@ -30,6 +30,16 @@ minor versions can still change behaviour.
 
 ### Changed
 
+- **A Precleared key that runs out is shown every way to carry on, not just
+  the largest pack.** The Today page and `sellbird status` gave one link, the
+  £39 pack, although Precleared's answer also carries a starter pack for a
+  first purchase, the monthly plan and the Growth plan. Each one the answer
+  offers is now listed with its price and its own checkout link, cheapest
+  commitment first, and the monthly plan only when the answer says it would
+  cover what the key sends. Prices are read from the answer, links are still
+  shown only for Precleared and its card checkout, and waiting for the free
+  checks to reset or switching the check off stay in the message as before.
+  An answer without those fields reads as it did.
 - **The writer sees what Sellbird read off a company's own site.** The free
   homepage signals (no structured data, a site untouched for six months, a very
   small sitemap, AI crawlers blocked) were collected but

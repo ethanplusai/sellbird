@@ -56,12 +56,15 @@ Without an API key Precleared allows 10 checks a day; a free key
 (PRECLEARED_API_KEY) allows 100 a day for its first 14 days, then 25 a day.
 ``sellbird setup`` and ``sellbird precleared-key`` get one for the user's email
 address in one step (create_free_key); https://precleared.dev/get-key works
-too. Beyond that, a key draws on a prepaid pack. When a key runs out, the held
-reason gives the checkout link from Precleared's answer.
+too. Beyond that, a key draws on a prepaid pack or a monthly plan. When a key
+runs out, the held reason gives the pack's checkout link from Precleared's
+answer, and the hold lists every way to carry on that the answer offers (a
+starter pack, the monthly plan when the answer recommends it, a pack, the
+Growth plan), each with its price and link.
 
 A hold is also recorded under STATUS_KEY, so the dashboard's Today page and
 `sellbird status` say that cold email is waiting and how to fix it (a free
-key, a pack, or nothing but time). The next fresh answer clears it.
+key, a pack or a plan, or nothing but time). The next fresh answer clears it.
 """
 
 import asyncio
@@ -135,6 +138,14 @@ HOLD_KINDS = ("keyless_limit", "out_of_checks", "key_rejected", "rate_limited", 
 # A 402's checkout link is only followed to Precleared itself or its card
 # checkout; any other host falls back to BUY_URL.
 BUY_HOSTS = ("precleared.dev", "checkout.stripe.com")
+# A 402 answer can offer more than the pack: a starter pack for a first
+# purchase, the monthly plan, the Growth plan. A hold shows at most this many.
+MAX_FIX_OPTIONS = 4
+MAX_OPTION_LABEL = 120
+# Bounds on the figures an option's label is built from, so a wrong or
+# hostile answer can't put nonsense in front of the user.
+MAX_PRICE_GBP = 10_000
+MAX_OPTION_CHECKS = 10_000_000
 # Answers that mean Precleared's server is busy or down, not that it can't
 # check one address.
 SERVER_BUSY = (502, 503, 504)
@@ -168,6 +179,9 @@ class Clearance:
     # where the user can fix it (a free key or this key's checkout link).
     hold_kind: str = ""
     fix_url: str = ""
+    # ``out_of_checks`` only: every way to carry on that the 402 answer
+    # offered, as {"label", "url"} dicts in the order they are shown.
+    fix_options: tuple = ()
     # True when the verdict came from the 30-day cache rather than a call.
     cached: bool = False
     # ``unknown`` only: how many unknown answers this address has had on
@@ -462,6 +476,7 @@ class PreclearedClient:
             return Clearance(
                 allowed=False, held=True, pause_checks=True,
                 hold_kind="out_of_checks", fix_url=buy_url,
+                fix_options=_buy_options(resp, self.api_key),
                 reason=self._redact(
                     "Precleared: today's free checks on your key are used and it has "
                     f"no credits left; add a pack ({buy_url}) "
@@ -568,17 +583,21 @@ def _error_code(resp: httpx.Response) -> str:
     return _text(data.get("error")) if isinstance(data, dict) else ""
 
 
-def _buy_url(resp: httpx.Response, api_key: str = "") -> str:
-    """The checkout link from a 402 answer's ``buy_url``, or BUY_URL.
-
-    Only a plain https link of sane length is used; a missing, malformed or
-    non-JSON body falls back to Precleared's buy page.
-    """
+def _json_object(resp: httpx.Response) -> dict:
+    """The JSON object in a response body, or {} (not JSON, not an object)."""
     try:
         data = resp.json()
     except (ValueError, RecursionError):
-        return BUY_URL
-    url = data.get("buy_url") if isinstance(data, dict) else None
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _checkout_url(url, api_key: str = "") -> str:
+    """``url`` if Sellbird will show it as a place to pay, else "".
+
+    Only a plain https link of sane length to Precleared or its card
+    checkout (BUY_HOSTS) passes, and never one that carries the key.
+    """
     if not (
         isinstance(url, str)
         and len(url) <= MAX_BUY_URL
@@ -586,7 +605,7 @@ def _buy_url(resp: httpx.Response, api_key: str = "") -> str:
         and not any(ch.isspace() for ch in url)
         and "\\" not in url
     ):
-        return BUY_URL
+        return ""
     try:
         parsed = urlsplit(url)
         host = parsed.hostname
@@ -594,30 +613,117 @@ def _buy_url(resp: httpx.Response, api_key: str = "") -> str:
         if (parsed.scheme != "https" or not host or parsed.username is not None
                 or parsed.password is not None or "%" in parsed.netloc
                 or parsed.netloc.endswith(":") or port == 0):
-            return BUY_URL
+            return ""
         if ":" in host:
             ipaddress.IPv6Address(host)
             # urlsplit accepts suffixes after the closing bracket; a browser
             # need not interpret that malformed authority the same way.
             if not re.fullmatch(r"\[[0-9a-fA-F:.]+\](?::[0-9]+)?", parsed.netloc):
-                return BUY_URL
+                return ""
         else:
             ascii_host = host.encode("idna").decode("ascii").rstrip(".")
             if len(ascii_host) > 253 or not all(
                 re.fullmatch(r"[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?", label)
                 for label in ascii_host.split(".")
             ):
-                return BUY_URL
+                return ""
         if not any(host == h or host.endswith("." + h) for h in BUY_HOSTS):
-            return BUY_URL
+            return ""
     except (ValueError, UnicodeError):
-        return BUY_URL
+        return ""
 
     if api_key and _contains_key(url, api_key):
         # Decoded copies are inspected, but a usable checkout/session URL
         # is kept intact.
-        return BUY_URL
+        return ""
     return url
+
+
+def _buy_url(resp: httpx.Response, api_key: str = "") -> str:
+    """The checkout link from a 402 answer's ``buy_url``, or BUY_URL.
+
+    A missing, malformed or non-JSON body, or a link ``_checkout_url``
+    won't show, falls back to Precleared's buy page.
+    """
+    return _checkout_url(_json_object(resp).get("buy_url"), api_key) or BUY_URL
+
+
+def _pounds(value) -> str:
+    """A price in pounds as text ("£9", "£9.50"), or "" if it isn't one."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return ""
+    if not (0 < value <= MAX_PRICE_GBP):  # False for NaN too
+        return ""
+    return f"£{int(value)}" if float(value).is_integer() else f"£{value:.2f}"
+
+
+def _whole(value, most: int) -> int:
+    """A count from 1 to ``most``, or 0 if ``value`` isn't one."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return 0
+    if not (1 <= value <= most) or not float(value).is_integer():
+        return 0
+    return int(value)
+
+
+_MONTHLY_PRICE_RE = re.compile(r"£[0-9]{1,5}(?:\.[0-9]{2})? a month")
+
+
+def _buy_options(resp: httpx.Response, api_key: str = "") -> tuple:
+    """Every way to carry on that a 402 answer offers, cheapest commitment
+    first: a starter pack (first purchase only), the monthly plan when the
+    answer recommends it, a pack, the Growth plan.
+
+    Each is {"label", "url"}. The label is Sellbird's own words around figures
+    read from the answer and bounded here, never the answer's text, and the
+    link passes ``_checkout_url``. An option missing its link or a figure it
+    needs is left out, so an answer without these fields gives ().
+    """
+    data = _json_object(resp)
+    found: dict[str, dict] = {}
+
+    packs = data.get("packs")
+    for pack in packs if isinstance(packs, list) else []:
+        if not isinstance(pack, dict):
+            continue
+        kind = pack.get("id")
+        if kind not in ("starter", "pack") or kind in found:
+            continue
+        price = _pounds(pack.get("price_gbp"))
+        checks = _whole(pack.get("checks"), MAX_OPTION_CHECKS)
+        url = _checkout_url(pack.get("url"), api_key)
+        if price and checks and url:
+            name = "a starter pack" if kind == "starter" else "a pack"
+            found[kind] = {"label": f"{name}, {price} for {checks:,} checks", "url": url}
+
+    # The monthly plan is offered only when the answer recommends it. When it
+    # recommends Growth instead, this key already has the monthly plan's
+    # allowance (a new key's first 14 days), so that plan wouldn't send
+    # anything today.
+    recommended = data.get("recommended")
+    if isinstance(recommended, dict) and recommended.get("plan") == "monthly":
+        price = recommended.get("price")
+        per_day = _whole(recommended.get("per_day"), MAX_OPTION_CHECKS)
+        url = (_checkout_url(recommended.get("url"), api_key)
+               or _checkout_url(data.get("plan_url"), api_key))
+        if isinstance(price, str) and _MONTHLY_PRICE_RE.fullmatch(price) and per_day and url:
+            found["monthly"] = {"label": f"the monthly plan, {price} for {per_day:,} checks a day",
+                                "url": url}
+
+    growth = data.get("growth")
+    if isinstance(growth, dict):
+        price = _pounds(growth.get("price_gbp_per_month"))
+        per_day = _whole(growth.get("checks_per_day"), MAX_OPTION_CHECKS)
+        url = _checkout_url(growth.get("url"), api_key)
+        if price and per_day and url:
+            # ``switch``: the key is on the monthly plan already, and the link
+            # is the page where its owner moves it to Growth.
+            name = "a switch to the Growth plan" if growth.get("switch") is True else "the Growth plan"
+            found["growth"] = {"label": f"{name}, {price} a month for {per_day:,} checks a day",
+                               "url": url}
+
+    order = ("starter", "monthly", "pack", "growth")
+    return tuple(found[k] for k in order if k in found)[:MAX_FIX_OPTIONS]
 
 
 def _reason(data: dict, next_step_first: bool = False) -> str:
@@ -751,6 +857,29 @@ def parse_status(raw: str) -> dict:
     return value if isinstance(value, dict) else {}
 
 
+# What a label from _buy_options is made of: words, figures, a pound sign.
+# Nothing a link or markup could be written in.
+_OPTION_LABEL_RE = re.compile(r"[A-Za-z0-9£,. ]+")
+
+
+def _hold_options(raw) -> list[dict]:
+    """``raw`` as a clean list of {"label", "url"} options ([] if it isn't one).
+
+    Used on the way into the settings table and again on the way out, so a
+    stored hold that was edited or damaged can't show a link ``_checkout_url``
+    wouldn't, a link written into a label, or text that drives a terminal.
+    """
+    options = []
+    for option in raw if isinstance(raw, (list, tuple)) else []:
+        if not isinstance(option, dict):
+            continue
+        label = " ".join(_clean(_text(option.get("label"))).split())[:MAX_OPTION_LABEL]
+        url = _checkout_url(option.get("url"))
+        if url and _OPTION_LABEL_RE.fullmatch(label):
+            options.append({"label": label, "url": url})
+    return options[:MAX_FIX_OPTIONS]
+
+
 async def record_hold(state, clearance: Clearance, waiting: int) -> None:
     """Store that cold email is waiting on the check, and how to fix it.
 
@@ -766,11 +895,15 @@ async def record_hold(state, clearance: Clearance, waiting: int) -> None:
         now = _utcnow().replace(microsecond=0).isoformat()
         since = previous.get("since") if (
             previous.get("status") == "held" and previous.get("kind") == kind) else None
-        await state.set_setting(STATUS_KEY, json.dumps({
+        status = {
             "status": "held", "kind": kind, "reason": _clean(clearance.reason)[:300],
             "url": _clean(clearance.fix_url), "waiting": max(1, int(waiting)),
             "since": since or now, "at": now,
-        }))
+        }
+        options = _hold_options(clearance.fix_options) if kind == "out_of_checks" else []
+        if options:
+            status["options"] = options
+        await state.set_setting(STATUS_KEY, json.dumps(status))
     except Exception as e:
         logger.warning(f"Precleared: failed to record the hold: {e}")
 
@@ -844,11 +977,20 @@ def hold_message(hold: dict) -> dict:
                        f"checks reset at midnight UK time. {replies}"),
         }
     if kind == "out_of_checks":
+        options = _hold_options(hold.get("options"))
+        if len(options) > 1:
+            # Precleared offered more than the pack: say each, so a first
+            # purchase or a steady sender isn't shown only the largest one.
+            listed = [f"{o['label']} ({o['url']})" for o in options]
+            ways = "; ".join(listed[:-1]) + f"; or {listed[-1]}"
+            fix = f"To send them now, pick one: {ways}."
+        else:
+            fix = f"Buy checks to send them now: {url or BUY_URL}."
         return {
             "tone": "warn", "url": url or BUY_URL, "url_label": "Buy checks",
             "title": "Your Precleared key is out of checks for today",
             "detail": (f"{emails}. The key has used today's free checks and has no pack "
-                       f"left. Buy checks to send them now: {url or BUY_URL}. Otherwise they "
+                       f"left. {fix} Otherwise they "
                        "go out after the free checks reset at midnight UK time, or switch the "
                        f"check off (compliance.precleared.enabled: false). {replies}"),
         }
