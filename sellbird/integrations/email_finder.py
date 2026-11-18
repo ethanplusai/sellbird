@@ -164,6 +164,25 @@ async def get_mx_host(domain: str) -> Optional[str]:
         return _mx_cache[domain]
     except Exception as e:
         logger.debug(f"MX lookup failed for {domain}: {e}")
+        # LOCAL PATCH (cloud container only, not upstream): there is no DNS
+        # here, so every domain looked mail-less and every address was graded
+        # invalid. With SELLBIRD_WEBSITE_PROXY set, ask a public DNS-over-HTTPS
+        # resolver through the session proxy instead.
+        import os
+        if os.environ.get("SELLBIRD_WEBSITE_PROXY", "").strip():
+            try:
+                async with httpx.AsyncClient(timeout=15) as client:
+                    resp = await client.get(
+                        "https://dns.google/resolve", params={"name": domain, "type": "MX"})
+                rows = [a["data"].split() for a in resp.json().get("Answer", [])
+                        if a.get("type") == 15]
+                rows.sort(key=lambda r: int(r[0]))
+                mx_host = rows[0][1].rstrip(".") if rows else None
+                _mx_cache[domain] = mx_host or None
+                return _mx_cache[domain]
+            except Exception as doh_error:
+                logger.debug(f"DNS-over-HTTPS MX lookup failed for {domain}: {doh_error}")
+                return None      # unknown, so not cached as "no mail server"
         _mx_cache[domain] = None
         return None
 

@@ -28,6 +28,7 @@ Hardening notes:
 import asyncio
 import json
 import logging
+import os
 import random
 import re
 from datetime import datetime, timezone
@@ -411,11 +412,20 @@ class Scout:
             backends.append(lambda: self._search_serper(query, serper_key))
         if tinyfish_key:
             backends.append(lambda: self._search_tinyfish(query, tinyfish_key))
-        backends.extend([
-            lambda: self._search_duckduckgo(query),
-            lambda: self._search_bing(query),
-            lambda: self._search_google(query),
-        ])
+        # LOCAL PATCH (cloud container only, not upstream): in this container
+        # (SELLBIRD_WEBSITE_PROXY set) the keyless engines answer with bot
+        # challenges or ignore the query, and scraping them is not allowed
+        # here, so only the keyed search APIs above are used.
+        if not os.environ.get("SELLBIRD_WEBSITE_PROXY", "").strip():
+            backends.extend([
+                lambda: self._search_duckduckgo(query),
+                lambda: self._search_bing(query),
+                lambda: self._search_google(query),
+            ])
+        elif not backends:
+            logger.info("Scout: no search key (TINYFISH_API_KEY or SERPER_API_KEY); "
+                        "skipping web search this cycle.")
+            return []
 
         for backend in backends:
             try:

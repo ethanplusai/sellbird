@@ -9,7 +9,9 @@ Fixed mail/API integrations keep their own clients and authentication settings.
 
 import asyncio
 import ipaddress
+import os
 import socket
+import ssl
 from time import monotonic
 
 import httpx
@@ -47,6 +49,24 @@ class PublicHTTPTransport(httpx.AsyncBaseTransport):
         self._transport = httpx.AsyncHTTPTransport(
             trust_env=False, limits=httpx.Limits(max_keepalive_connections=0),
         )
+        # LOCAL PATCH (cloud container only, not upstream): this machine has no
+        # DNS and no direct route out, only an egress proxy outside the
+        # container. With SELLBIRD_WEBSITE_PROXY set, websites are fetched
+        # through it. The URL checks below still run; the address check cannot
+        # (nothing resolves here), and the proxy resolves names on its own
+        # network, which has no route back into this container.
+        self._proxy_transport = None
+        proxy = os.environ.get("SELLBIRD_WEBSITE_PROXY", "").strip()
+        if proxy == "session":
+            # The session proxy's port can change when the container restarts.
+            proxy = (os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy") or "").strip()
+        if proxy:
+            context = ssl.create_default_context(
+                cafile=os.environ.get("SSL_CERT_FILE") or None)
+            self._proxy_transport = httpx.AsyncHTTPTransport(
+                proxy=proxy, verify=context, trust_env=False,
+                limits=httpx.Limits(max_keepalive_connections=0),
+            )
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
         url = request.url
@@ -67,6 +87,24 @@ class PublicHTTPTransport(httpx.AsyncBaseTransport):
             literal = ipaddress.ip_address(host)
         except ValueError:
             literal = None
+        if self._proxy_transport is not None:
+            if literal is not None:
+                try:
+                    _public_address(host)
+                except ValueError as exc:
+                    raise UnsafeURLError(
+                        "Website resolves to a non-public destination", request=request) from exc
+            if url.scheme == "http":
+                # The proxy only tunnels HTTPS.
+                if port != 80:
+                    raise httpx.ConnectError("Plain HTTP on a custom port", request=request)
+                request = httpx.Request(
+                    method=request.method, url=url.copy_with(scheme="https", port=None),
+                    headers=request.headers, stream=request.stream,
+                    extensions=request.extensions,
+                )
+            return await self._proxy_transport.handle_async_request(request)
+
         try:
             if literal is not None:
                 addresses = [_public_address(host)]
@@ -115,6 +153,8 @@ class PublicHTTPTransport(httpx.AsyncBaseTransport):
 
     async def aclose(self) -> None:
         await self._transport.aclose()
+        if self._proxy_transport is not None:
+            await self._proxy_transport.aclose()
 
 
 def public_http_client(
