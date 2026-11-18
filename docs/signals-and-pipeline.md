@@ -61,7 +61,7 @@ sellbird discover               # go
 
 | Source | Cost | Free tier | Best for |
 |---|---|---|---|
-| **OpenStreetMap** *(default)* | free | unlimited, no account | Trying the whole pipeline before paying anyone. Coverage is thin for businesses without a storefront: OSM maps premises, so whole trades are barely present (under 2,000 roofers and under 2,300 plumbers in the entire US). Sellbird says so in the UI rather than quietly under-delivering. |
+| **OpenStreetMap** *(default)* | free | unlimited, no account | Trying the whole pipeline before paying anyone, and a real list for premises-based businesses: hotels, guesthouses, vacation rentals, restaurants, cafés, dive centres, boat and car rentals, travel agencies, estate agents, wedding and event planners, spas (English and French terms). Coverage is thin for businesses without a storefront: OSM maps premises, so whole trades are barely present (under 2,000 roofers and under 2,300 plumbers in the entire US). Sellbird says so in the UI rather than quietly under-delivering. |
 | **TinyFish** | free | 30 searches a minute, 500 an hour, no card | Finding businesses by phrase (including the startup and hiring presets) at no cost. Records no search rank: its ordering isn't Google's and it takes no location, so use Serper or DataForSEO SERP for rank signals. |
 | **DataForSEO Business Listings** | $0.372 / 1,000 | $1 credit | Local trades, clinics, contractors. Phone, domain, rating, claimed status — and it can filter for businesses with **no website at all**. |
 | **DataForSEO SERP** | $0.006 / search at depth 30 (Live, $0.002 per 10 results) | $1 credit + free sandbox | Organic rank as the buying signal, plus who holds the local 3-pack, searched from the city centre. |

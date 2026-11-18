@@ -9,6 +9,15 @@ minor versions can still change behaviour.
 
 ### Added
 
+- **The free OpenStreetMap source knows tourism and hospitality.** Hotels,
+  motels, guesthouses and pensions, vacation rentals, campsites, restaurants,
+  cafés, bars, dive and surf centres, boat and car rentals, travel agencies and
+  excursions, estate agents, wedding and event planners, spas, in English and
+  French (`hôtel`, `pension`, `plongée`, `agence immobilière`, `mariage`…).
+  Each maps to the OSM tags that carry those premises, and a found business
+  keeps its `tourism`/`amenity` category. Before, every one of these terms
+  raised "OpenStreetMap has no category" and the run exited non-zero. A term
+  OSM has no category for still says so: no catch-all.
 - **`writer.require_tip: true` skips prospects with nothing to build a tip
   on.** A first email is meant to name one concrete thing the sender would
   change; with no finding about the company, the draft could only say it had no

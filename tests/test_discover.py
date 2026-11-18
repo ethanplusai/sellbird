@@ -925,6 +925,55 @@ async def test_overpass_throttling_is_an_error_not_an_empty_market(monkeypatch):
     assert seen == list(D.OpenStreetMap.ENDPOINTS), "every mirror should be tried"
 
 
+@pytest.mark.parametrize("term, expected", [
+    ("hôtel Moorea", ["tourism=hotel"]),
+    ("Hotel Papeete", ["tourism=hotel"]),
+    ("pension de famille Moorea", ["tourism=guest_house"]),
+    ("restaurant Papeete", ["amenity=restaurant"]),
+    ("centre de plongée Rangiroa", ["shop=scuba_diving", "sport=scuba_diving"]),
+    ("location de voiture Tahiti", ["amenity=car_rental"]),
+    ("agence immobilière Punaauia", ["office=estate_agent"]),
+    ("real estate agency Denver", ["office=estate_agent"]),
+    ("organisateur de mariage Bora Bora", ["shop=wedding", "office=event_management"]),
+    ("wedding planner Austin", ["shop=wedding", "office=event_management"]),
+])
+def test_osm_knows_tourism_and_hospitality_categories(term, expected):
+    """Hotels, guesthouses, restaurants and the rest of the tourism trade are
+    premises, which is exactly what OpenStreetMap maps. Before this they all
+    raised "no category", in English and in French alike."""
+    assert D.OpenStreetMap()._tags(term) == expected
+
+
+def test_osm_still_refuses_a_term_it_has_no_category_for():
+    """No catch-all: a trade OSM doesn't carry says so instead of answering
+    with every registered office in town."""
+    assert D.OpenStreetMap()._tags("quantum consultancy Denver") == []
+
+
+@pytest.mark.asyncio
+async def test_osm_keeps_a_hotel_category_and_website(monkeypatch):
+    monkeypatch.setattr(D.OpenStreetMap, "BACKOFF", 0.0)
+
+    def handler(request):
+        body = request.content.decode()
+        assert "tourism=hotel" in body
+        return httpx.Response(200, json={"elements": [{
+            "type": "way", "id": 7, "center": {"lat": -17.5, "lon": -149.8},
+            "tags": {"name": "Lagoon View Lodge", "tourism": "hotel",
+                     "website": "https://lagoon-view.example",
+                     "addr:city": "Moorea"},
+        }]})
+
+    provider = D.OpenStreetMap()
+    async with _client(handler) as client:
+        out = await provider.fetch(client, {}, D.DiscoveryQuery(
+            term="hôtel", coordinate="-17.5,-149.8,20"))
+    assert len(out) == 1
+    assert out[0].category == "hotel"
+    assert out[0].domain == "lagoon-view.example"
+    assert out[0].external_id == "osm:way/7"
+
+
 @pytest.mark.asyncio
 async def test_overpass_falls_over_to_the_next_mirror(monkeypatch):
     monkeypatch.setattr(D.OpenStreetMap, "BACKOFF", 0.0)

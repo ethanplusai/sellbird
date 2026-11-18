@@ -16,7 +16,7 @@
 
 **Codex calls fail** — Read the log line; every Codex error says what to do. "Not logged in" or "expired or is due for renewal" → use Codex once or run `codex login` with ChatGPT. "Hasn't been verified with Sellbird" → install the supported Codex version named in the message. "Isolation could not be verified" → a Codex config layer outside your `~/.codex` (for example a managed or `/etc/codex` config) forces a tool, hook, MCP server, instructions or custom endpoint back on; Sellbird refuses to send prompts until it's gone. Model catalog errors → choose an available model ID from the catalog shown in the message, or leave `brain.model` blank to select a listed model. Sellbird never switches to Claude on its own.
 
-**Discovery finds nothing** — Confirm signals first (`sellbird signals --confirm free`); nothing is collected until you do. If you're on the free OpenStreetMap source, it only covers mapped trades and is thin for service-area businesses — `sellbird discover --providers` shows the alternatives.
+**Discovery finds nothing** — Confirm signals first (`sellbird signals --confirm free`); nothing is collected until you do. If you're on the free OpenStreetMap source, it only covers mapped categories (home-services trades, and tourism and hospitality: hotels, guesthouses, restaurants, dive centres, rentals, estate agents, event planners) and is thin for service-area businesses — `sellbird discover --providers` shows the alternatives.
 
 **Overpass is throttling** — It's free volunteer infrastructure. Sellbird walks three mirrors before giving up. Wait a few minutes, or use a paid provider for bulk work.
 
