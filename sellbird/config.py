@@ -990,8 +990,8 @@ def load_brain_config(config_path: str | None = None) -> BrainConfig:
 
 
 def load_env() -> EnvConfig:
-    """Load environment variables from .env file."""
-    load_dotenv()
+    """Load environment variables from the home folder's .env file."""
+    load_dotenv(PROJECT_ROOT / ".env")
     env = EnvConfig(
         instantly_api_key=os.getenv("INSTANTLY_API_KEY", "").strip(),
         dataforseo_login=os.getenv("DATAFORSEO_LOGIN", "").strip(),

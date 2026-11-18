@@ -191,6 +191,12 @@ minor versions can still change behaviour.
 
 - **Instantly's daily cap counts your local day, not UTC** (from #177 by
   @solvejet-team), so the cap resets at your midnight.
+- **API keys are read from the home folder's `.env`.** `load_env()` searched
+  upward from the installed package for a `.env`, so with `SELLBIRD_HOME` set,
+  or after a pip install, every key in the home's `.env` was ignored and each
+  provider reported itself unconfigured. It now reads the `.env` beside
+  `sellbird.yaml`, the same home the config comes from. A source checkout reads
+  the same file as before.
 
 ## [0.4.0] - 2026-11-06
 

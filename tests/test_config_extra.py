@@ -173,6 +173,14 @@ def test_load_env_reads_environment(monkeypatch):
     assert env.hunter_api_key == ""
 
 
+def test_load_env_reads_the_home_folders_env_file(monkeypatch, tmp_path):
+    # SELLBIRD_HOME (and a pip install) moves the home; its .env comes with it.
+    (tmp_path / ".env").write_text("SCAVIO_API_KEY=key-from-home\n", encoding="utf-8")
+    monkeypatch.setattr("sellbird.config.PROJECT_ROOT", tmp_path)
+    monkeypatch.delenv("SCAVIO_API_KEY", raising=False)
+    assert load_env().scavio_api_key == "key-from-home"
+
+
 def test_env_config_rejects_non_string():
     with pytest.raises(ValidationError):
         EnvConfig(instantly_api_key=["not", "a", "string"])
