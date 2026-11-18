@@ -535,6 +535,25 @@ tr:focus-within .row-action { opacity: 1; }
 @media (hover: hover) { .segmented button:not(.on):hover { color: var(--text); } }
 .table-foot { font-size: var(--fs-caption); color: var(--text-3); padding: var(--sp-3) 2px 0; }
 
+/* Outbox filters: series step, platform, ads, order. Same height as the
+   segmented control so the row reads as one bar. */
+.outbox-toolbar select.form-input {
+  width: auto; max-width: 220px; height: 32px; padding: 0 8px; font-size: var(--fs-ui);
+}
+.toolbar-hint { font-size: var(--fs-caption); color: var(--text-3); }
+.toolbar-end { display: inline-flex; align-items: center; gap: var(--sp-2); margin-left: auto; }
+.toolbar-count { font-size: var(--fs-caption); color: var(--text-2); font-variant-numeric: tabular-nums; }
+.btn-link {
+  padding: 0; border: none; background: none; cursor: pointer; font: inherit; color: inherit;
+  text-decoration: underline; text-decoration-color: var(--line-strong); text-underline-offset: 2px;
+}
+@media (hover: hover) { .btn-link:hover { text-decoration-color: currentColor; } }
+.desk-item .di-step { color: var(--text-2); font-weight: 500; margin-right: 6px; }
+@media (max-width: 640px) {
+  .outbox-toolbar select.form-input { max-width: none; flex: 1 1 140px; font-size: 16px; }
+  .toolbar-end { margin-left: 0; }
+}
+
 /* ── Today: the queue, the steps, the timeline ───────────────── */
 
 .queue { display: flex; flex-direction: column; gap: var(--sp-2); }
