@@ -64,7 +64,7 @@ DOMAINS_FAILING_TO_PAUSE = 2
 CHECK_SECONDS_PER_CYCLE = 90
 
 # Prospect pipeline statuses that mean "stop emailing this person".
-STOP_STATUSES = {"replied", "opted_out", "lost", "meeting", "closed"}
+STOP_STATUSES = {"replied", "opted_out", "lost", "meeting", "closed", "excluded"}
 
 KILL_SWITCH_KEY = "sending_paused"
 BOUNCE_COUNT_KEY = "bounce_count"
@@ -812,6 +812,23 @@ class Sender:
             error=f"{prefix}{retry_at:%Y-%m-%d %H:%M} UTC: {reason}"[:300])
         return retry_at
 
+    async def _excluded_supplier(self, prospect) -> dict | None:
+        brands = getattr(getattr(self.config, "icp", None), "exclude_if_site_mentions", None) or []
+        if not brands or not prospect.company_id:
+            return None
+        from sellbird.collectors.supplier_check import excluded_supplier
+        try:
+            company = await self.state.get_company(prospect.company_id)
+            hit = await excluded_supplier(self.state, company, brands)
+        except Exception as e:
+            logger.debug(f"Sender: supplier check failed for {prospect.company}: {e}")
+            return None
+        if hit:
+            await self.state.update_prospect_status(prospect.id, "excluded")
+            logger.warning(f"Sender: not emailing {prospect.company}: their site mentions "
+                           f"{hit['brand']} ({hit['url']})")
+        return hit
+
     async def _blocked(self, item: dict, prospect, allow_risky: bool) -> tuple[str, str] | None:
         """Why this email must not go out, as (status, error), or None."""
         await sync_sending_mode(self.config, self.state)   # "Turn off autopilot" counts at once
@@ -837,6 +854,12 @@ class Sender:
             colleague = await self.state.colleague_who_replied(prospect.id)
             if colleague:
                 return "cancelled", f"{COLLEAGUE_REPLIED} ({colleague})"
+            # Their site mentions a brand we mustn't pitch. Checked again here
+            # so drafts written before the check (or before the site changed)
+            # are caught too; the result is cached, so it's one read per company.
+            supplier = await self._excluded_supplier(prospect)
+            if supplier:
+                return "cancelled", f"their site mentions {supplier['brand']} ({supplier['url']})"
         # Sellbird's writing rules (no dashes, no exclamation marks, no AI
         # phrases): a draft that breaks them waits for an edit instead of
         # going out. Length and shape were checked when it was written, so an

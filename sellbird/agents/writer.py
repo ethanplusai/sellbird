@@ -233,6 +233,14 @@ class Writer:
             p for p in prospects_with_email
             if not await self.state.colleague_who_replied(p.id)
         ]
+        # Their own site mentions a brand we mustn't pitch (a club already in
+        # the kit we sell): no email to write.
+        brands = getattr(getattr(self.config, "icp", None), "exclude_if_site_mentions", None) or []
+        if brands:
+            prospects_with_email = [
+                p for p in prospects_with_email
+                if not await self._exclude_for_supplier(p, brands)
+            ]
         if not prospects_with_email:
             logger.info(
                 "Writer: No prospects with deliverable (verified/risky) emails yet."
@@ -373,6 +381,29 @@ class Writer:
         except Exception:
             company = None
         return bool(company and company.signals)
+
+    async def _exclude_for_supplier(self, prospect, brands) -> bool:
+        """True (and the prospect marked 'excluded') when their company's
+        website mentions one of ``brands``."""
+        from sellbird.collectors.supplier_check import excluded_supplier
+        if not prospect.company_id:
+            return False
+        try:
+            company = await self.state.get_company(prospect.company_id)
+            hit = await excluded_supplier(self.state, company, brands)
+        except Exception as e:
+            logger.debug(f"Writer: supplier check failed for {prospect.company}: {e}")
+            return False
+        if not hit:
+            return False
+        await self.state.update_prospect_status(prospect.id, "excluded")
+        await self.state.log_action(
+            action_type="excluded_supplier", agent="writer",
+            details={"prospect_id": prospect.id, "company": prospect.company, **hit},
+        )
+        logger.info(f"Writer: skipping {prospect.company}: their site mentions "
+                    f"{hit['brand']} ({hit['url']})")
+        return True
 
     async def _count_failed_attempt(self, batch_name: str, prospects: list):
         """Count one unusable sequence against each prospect in the batch.

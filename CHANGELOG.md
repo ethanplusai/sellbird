@@ -9,6 +9,16 @@ minor versions can still change behaviour.
 
 ### Added
 
+- **Skip companies whose own site names a brand** (`icp.exclude_if_site_mentions`).
+  A retailer for one brand shouldn't pitch a club already wearing it. List
+  the brands (`["acmekit"]`) and, before writing to a prospect, Sellbird reads
+  their homepage and up to six of their own kit, shop, sponsor and about
+  pages; a whole-word mention in text, a link or an image address (including
+  a link to a `<brand>store` shop) marks the prospect `excluded` and no email
+  is written. The sender checks again before anything goes out, so drafts
+  written earlier are caught too. Verdicts are cached per company for 30
+  days; a site that can't be read gives no verdict and is tried again.
+  Off unless you list a brand.
 - **`writer.require_tip: true` skips prospects with nothing to build a tip
   on.** A first email is meant to name one concrete thing the sender would
   change; with no finding about the company, the draft could only say it had no

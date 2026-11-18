@@ -74,6 +74,11 @@ class ICPConfig(BaseModel):
     # hiring a "Head of Growth" is buying growth tooling). Empty → falls back
     # to `titles`. Used for careers-page scanning and job-board discovery.
     hiring_signals: list[str] = []
+    # Brands that rule a company out when its own website mentions them, e.g.
+    # ["acmekit"] for an Acmekit retailer: a club already in that kit is a
+    # customer already or buys it elsewhere. Checked before writing and again
+    # before sending (sellbird/collectors/supplier_check.py).
+    exclude_if_site_mentions: list[str] = []
     # Discovery needs a radius, not a place name. Maps each entry in
     # `geography` to "lat,lng,radius_km" — e.g.
     #   "Denver, CO": "39.7392,-104.9903,50"
