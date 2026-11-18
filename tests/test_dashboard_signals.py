@@ -407,6 +407,7 @@ def test_cohort_browser_export_uses_auth_and_handles_failures():
     script = r'''
 const fs = require('fs'), vm = require('vm');
 const calls = [], revoked = [], links = [];
+global.uiText = s => s;
 global.window = {location: {origin: 'http://127.0.0.1:5555', hash: ''}};
 global.sessionStorage = {getItem: () => 'T'.repeat(43)};
 global.document = {body: {appendChild: x => links.push(x)}, createElement: () =>
@@ -472,6 +473,7 @@ const app = fs.readFileSync(process.argv[1], 'utf8');
 const el = {innerHTML: 'previous export button'}, pending = [];
 global.document = {getElementById: () => el};
 global.api = (path, opts) => new Promise(resolve => pending.push({resolve, body: JSON.parse(opts.body)}));
+global.uiText = s => s;
 global.escHtml = s => s || '';
 vm.runInThisContext("const _cohort = {require: new Set(['A']), exclude: new Set()};" +
  "let _cohortOffset = 0, _cohortGeneration = 0; const COHORT_PAGE = 50;" +

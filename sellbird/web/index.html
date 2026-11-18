@@ -328,6 +328,14 @@
 <div id="settings" class="section">
   <div class="section-head"><div><h2>Settings</h2><p>Credentials are stored locally in <code>.env</code> and never sent anywhere except the services themselves.</p></div></div>
 
+  <div class="card">
+    <label class="form-label" for="dashboard-locale">Language</label>
+    <select class="form-input" id="dashboard-locale" data-locale-picker>
+      <option value="en" lang="en">English</option>
+      <option value="es" lang="es">Español</option>
+    </select>
+  </div>
+
   <div class="subhead">Sending</div>
   <div id="sending-mode-card"></div>
 
@@ -600,6 +608,8 @@
 </main>
 </div>
 
+<script src="/static/locale-es.js"></script>
+<script src="/static/locale.js"></script>
 <script src="/static/app.js"></script>
 </body>
 </html>
