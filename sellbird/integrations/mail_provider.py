@@ -15,6 +15,7 @@ thread. Two native providers ship:
 it isn't a MailProvider because Instantly owns sequencing/sending itself.
 """
 
+import html as html_lib
 import logging
 import re
 from abc import ABC, abstractmethod
@@ -174,6 +175,43 @@ def strip_quoted_reply(body: str) -> str:
         head = head[:m.start()] + ("\n" + below if marked else "")
     kept = _unquoted(head).strip() or _unquoted(text).strip()
     return re.sub(r"\n{3,}", "\n\n", kept)
+
+
+# A reply that arrives as HTML (no plain-text part, or a provider that sends
+# HTML) is turned into the text a person reads: hidden parts dropped, block
+# tags made line breaks, and entities such as &nbsp; decoded, so nobody sees
+# markup or "&nbsp;" where the sender typed a space.
+_HTML_HIDDEN_RE = re.compile(r"(?is)<(head|style|script|title)\b[^>]*>.*?</\1\s*>|<!--.*?-->")
+_HTML_BREAK_RE = re.compile(
+    r"(?i)<br\s*/?>|</?(?:p|div|li|tr|h[1-6]|blockquote|table|ul|ol|pre|hr)\b[^>]*>")
+_HTML_TAG_RE = re.compile(r"(?s)<[^>]*>")
+_HTML_MARK_RE = re.compile(
+    r"(?i)<(?:!doctype|html|body|div|p|br|span|table|font|blockquote|a)[\s>/]")
+# Only a complete entity (ending in ";") is decoded in plain text, so words
+# like "R&D" or "AT&T" stay as written.
+_ENTITY_RE = re.compile(r"&(?:#[0-9]{1,7}|#[xX][0-9a-fA-F]{1,6}|[A-Za-z][A-Za-z0-9]{1,31});")
+_INVISIBLE_SPACE = str.maketrans({"\xa0": " ", "\u200b": None, "\ufeff": None})
+
+
+def html_to_text(markup: str) -> str:
+    """The text of an HTML email, as a person reading it sees it."""
+    text = _HTML_HIDDEN_RE.sub(" ", markup or "")
+    text = _HTML_BREAK_RE.sub("\n", text)
+    text = html_lib.unescape(_HTML_TAG_RE.sub("", text)).translate(_INVISIBLE_SPACE)
+    lines = [re.sub(r"[ \t\f\v]+", " ", line).strip() for line in text.replace("\r\n", "\n").split("\n")]
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
+
+
+def clean_reply_text(text: str) -> str:
+    """A reply's body as plain text: HTML becomes its text, and an entity
+    left in plain text (&nbsp;, &amp;, &#39;) becomes the character it
+    stands for. Safe to run on text that is already clean."""
+    text = text or ""
+    if _HTML_MARK_RE.search(text):
+        return html_to_text(text)
+    if "&" in text:
+        text = _ENTITY_RE.sub(lambda m: html_lib.unescape(m.group(0)), text)
+    return text.translate(_INVISIBLE_SPACE)
 
 
 def looks_like_bounce(from_email: str, subject: str) -> bool:

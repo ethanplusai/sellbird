@@ -34,6 +34,8 @@ from sellbird.integrations.mail_provider import (
     MailProvider,
     SendResult,
     TokenSource,
+    clean_reply_text,
+    html_to_text,
     identity_from_config,
     looks_like_bounce,
     missing_token_text,
@@ -498,7 +500,8 @@ class GmailProvider(MailProvider):
         if not from_email:
             return None
         subject = headers.get("subject", "")
-        body = GmailProvider._extract_text(payload) or data.get("snippet", "")
+        # Gmail's snippet is HTML-escaped ("&#39;", "&nbsp;"): decode it too.
+        body = clean_reply_text(GmailProvider._extract_text(payload) or data.get("snippet", ""))
         return InboundMessage(
             provider_id=data.get("id", ""),
             from_email=from_email,
@@ -562,9 +565,7 @@ class GmailProvider(MailProvider):
             if text:
                 return text
         if payload.get("mimeType", "").startswith("text/html"):
-            import re
-            html = decode(payload)
-            return re.sub(r"<[^>]+>", " ", html)
+            return html_to_text(decode(payload))
         return ""
 
     async def test_connection(self) -> tuple[bool, str]:

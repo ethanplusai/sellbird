@@ -189,6 +189,12 @@ minor versions can still change behaviour.
 
 ### Fixed
 
+- **Replies no longer show "&nbsp;" or HTML in the Conversations tab.** A
+  reply that came as HTML only (no plain-text part), or Gmail's preview of
+  one, kept its entities: tags were stripped but "&nbsp;", "&amp;" and
+  "&#39;" stayed as typed. Replies are now read as text when they arrive,
+  replies stored before this show cleanly, and a draft that copied markup
+  is held with "has HTML code in it" instead of being sent.
 - **Instantly's daily cap counts your local day, not UTC** (from #177 by
   @solvejet-team), so the cap resets at your midnight.
 
