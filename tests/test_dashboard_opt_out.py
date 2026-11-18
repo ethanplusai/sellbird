@@ -117,7 +117,7 @@ def _render_panel(prospect, data, armed=False):
         match = re.search(pattern, source, re.S | re.M)
         assert match, pattern
         parts.append(match.group(0))
-    script = ("const relTime = d => 'WHEN';\nconst statusMeta = s => ({label: s.charAt(0).toUpperCase() + s.slice(1)});\n" + "\n".join(parts) +
+    script = ("const uiText = s => s;\nconst relTime = d => 'WHEN';\nconst statusMeta = s => ({label: s.charAt(0).toUpperCase() + s.slice(1)});\n" + "\n".join(parts) +
               f"\nlet _optOut = {{id: 'p1', data: {json.dumps(data)}, armed: {json.dumps(armed)}, busy: false}};"
               f"\nprocess.stdout.write(optOutPanel({json.dumps(prospect)}));")
     return subprocess.run([node, "-e", script], capture_output=True, text=True, encoding="utf-8",

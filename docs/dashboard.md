@@ -43,6 +43,8 @@ Colour is kept for meaning. The chrome is neutral and a single blue marks what y
 
 Appearance has three states: `auto` follows your OS and is the default, or pick light or dark from the button at the bottom of the sidebar. Dark mode uses the same layout with a different set of colour tokens.
 
+**Language.** Choose English or Español in **Settings → Language**. Your choice is saved in the browser profile for the dashboard address and survives Sellbird updates. Use the same hostname and port to keep the choice. Clearing site data resets it.
+
 ---
 
 ## How the data is stored

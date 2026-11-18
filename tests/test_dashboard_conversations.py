@@ -208,7 +208,7 @@ def _render_actions(convo):
         match = re.search(pattern, source, re.S | re.M)
         assert match, pattern
         parts.append(match.group(0))
-    script = "\n".join(parts) + f"\nprocess.stdout.write(convoActions({json.dumps(convo)}));"
+    script = "const uiText = s => s;\n" + "\n".join(parts) + f"\nprocess.stdout.write(convoActions({json.dumps(convo)}));"
     return subprocess.run([node, "-e", script], capture_output=True, text=True, encoding="utf-8",
                           check=True, timeout=30).stdout
 
