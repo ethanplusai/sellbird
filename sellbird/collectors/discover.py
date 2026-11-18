@@ -156,9 +156,23 @@ def _words(text: str) -> list[str]:
     return [w for w in re.findall(r"[a-z0-9]+", text.lower()) if w]
 
 
+# Second-level labels under a two-letter country code: acme.co.uk is "acme",
+# not "acme co"; kings.peterborough.sch.uk is "kings peterborough".
+_SECOND_LEVEL_LABELS = frozenset(
+    "co com org net ac gov edu sch ltd plc me nhs mod police nic".split())
+
+
+def _without_suffix(host: str) -> str:
+    """The host minus its public suffix: dtfc.co.uk → dtfc, a.b.com → a.b."""
+    parts = [p for p in host.split(".") if p]
+    if len(parts) >= 3 and len(parts[-1]) == 2 and parts[-2] in _SECOND_LEVEL_LABELS:
+        return ".".join(parts[:-2])
+    return ".".join(parts[:-1]) if len(parts) >= 2 else host
+
+
 def _domain_stem(domain: str) -> str:
     host = normalize_domain(domain)
-    return re.sub(r"[^a-z0-9]", "", host.rsplit(".", 1)[0]) if host else ""
+    return re.sub(r"[^a-z0-9]", "", _without_suffix(host)) if host else ""
 
 
 def _segment_matches_domain(segment: str, stem: str) -> bool:
@@ -212,12 +226,61 @@ def _split_stem(stem: str) -> list[str]:
     return parts
 
 
-def name_from_domain(domain: str) -> str:
-    stem = normalize_domain(domain).rsplit(".", 1)[0]
+def _name_from_stem(stem: str) -> str:
     words = [w for chunk in re.split(r"[-_.]+", stem) if chunk for w in _split_stem(chunk)]
     # Short vowel-less leftovers are initials: "kq" → "KQ".
     return " ".join(w.upper() if len(w) <= 3 and not re.search(r"[aeiouy]", w)
                     else w.capitalize() for w in words)
+
+
+def name_from_domain(domain: str) -> str:
+    return _name_from_stem(_without_suffix(normalize_domain(domain)))
+
+
+def _legacy_name_from_domain(domain: str) -> str:
+    """What name_from_domain gave before it knew .co.uk ("Dtfc Co"), so
+    names stored then can be recognised and rebuilt."""
+    return _name_from_stem(normalize_domain(domain).rsplit(".", 1)[0])
+
+
+_WELCOME_PREFIX = re.compile(r"(?i)^\s*welcome\s+to\s+")
+# A lone lowercase "l" between spaces is a pipe typed by hand:
+# "Leamington Lions FC l Ladies, girls & wildcats football l".
+_PIPE_AS_L = re.compile(r"(?:^|\s)l(?=\s|$)")
+_LOOKS_LIKE_URL = re.compile(r"(?i)^(?:https?://|www\.)|^[a-z0-9-]+(?:\.[a-z0-9-]+)+/?$")
+
+
+def clean_company_name(name: str, domain: str = "") -> str:
+    """A company name fit to put in an email.
+
+    Fixes what page titles and URLs leave behind: a web address stored as the
+    name, "Welcome to …", title tails after a separator ("Club l Ladies l",
+    "Club | Home"), trailing "!" or ":", and domain-derived names from before
+    .co.uk was understood ("Dtfc Co"). Anything else is returned as it was.
+    """
+    raw = unescape(re.sub(r"\s+", " ", str(name or ""))).strip()
+    host = normalize_domain(domain) if domain else ""
+    if not raw:
+        return name_from_domain(host) if host else ""
+    if _LOOKS_LIKE_URL.search(raw):
+        # The address itself names the business (the passed domain may be a
+        # mailbox host like a webmail provider's).
+        return name_from_domain(raw) or raw
+    if host and raw == _legacy_name_from_domain(host) and raw != name_from_domain(host):
+        return name_from_domain(host)
+    text = _WELCOME_PREFIX.sub("", raw)
+    text = _PIPE_AS_L.sub(" | ", text)
+    segments = [s.strip(" ,.-!:|") for s in _TITLE_SEPARATORS.split(text)]
+    segments = [s for s in segments if s]
+    if not segments:
+        return name_from_domain(host) if host else raw
+    best = segments[0]
+    if len(segments) > 1 and host:
+        stem = _domain_stem(host)
+        scored = max(segments, key=lambda s: _segment_domain_evidence(s, stem))
+        if _segment_domain_evidence(scored, stem):
+            best = scored
+    return best.strip(" ,.-!:|") or raw
 
 
 def name_matches_domain(name: str, domain: str) -> bool:

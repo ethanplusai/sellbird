@@ -713,7 +713,7 @@ async def test_quiet_hours_still_wake_for_someone_cleared_after_a_hold(state, mo
 
     known = await seed_at(state, "Tokyo, Japan", "kenji@osaka.example")
     await store(state, "kenji@osaka.example", verdict, country="JP",
-                company="osaka.example", name="Jane Doe")
+                company="Osaka", name="Jane Doe")  # as stored: names are cleaned
     await approved(state, known, "kenji@osaka.example", step=2)
 
     assert await sender.cold_due_in_window() is wakes
@@ -732,7 +732,7 @@ async def test_quiet_hours_find_cleared_follow_up_beyond_first_page(state, monke
         await approved(state, pid, email)
     known = await seed_at(state, "Tokyo, Japan", SAM)
     await approved(state, known, SAM, step=2)
-    await store(state, SAM, OK_BODY, country="JP", company="beta.example", name="Jane Doe")
+    await store(state, SAM, OK_BODY, country="JP", company="Beta", name="Jane Doe")  # as stored: names are cleaned
     sender = window_sender(state, FakeProvider(), monkeypatch)
     with_check(sender, httpx.MockTransport(lambda request: httpx.Response(503)))
     sender.compliance_held = True

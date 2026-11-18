@@ -141,6 +141,16 @@ def _norm(value: str | None) -> str:
     return (value or "").strip().lower()
 
 
+def _clean_name(name: str | None, domain: str = "") -> str:
+    """Every company name stored passes through here, whichever path found
+    it, so a page title or URL never ends up in an email."""
+    from sellbird.collectors.discover import clean_company_name
+    try:
+        return clean_company_name(name or "", domain or "")
+    except Exception:
+        return name or ""
+
+
 # ── Schema migrations ─────────────────────────────────────────────────
 # Each entry is an idempotent SQL script. The index into this list + 1 is
 # the schema version stored in PRAGMA user_version. Never edit or reorder
@@ -655,6 +665,7 @@ class StateManager:
         if not company.id:
             company.id = _new_id()
         company.domain = _norm(company.domain)
+        company.name = _clean_name(company.name, company.domain or company.website)
         async with self._connect() as db:
             cursor = await db.execute(
                 """INSERT OR IGNORE INTO companies
@@ -809,6 +820,9 @@ class StateManager:
             prospect.id = _new_id()
         prospect.email = _norm(prospect.email)
         prospect.linkedin_url = (prospect.linkedin_url or "").strip()
+        if prospect.company:
+            prospect.company = _clean_name(
+                prospect.company, prospect.email.rpartition("@")[2] if "@" in prospect.email else "")
         async with self._connect() as db:
             cursor = await db.execute(
                 """INSERT OR IGNORE INTO prospects
@@ -2075,6 +2089,11 @@ class StateManager:
     async def rename_company(self, company_id: str, name: str):
         """Set a company's name, and the copy each of its prospects carries."""
         async with self._connect() as db:
+            async with db.execute(
+                "SELECT domain, website FROM companies WHERE id = ?", (company_id,)
+            ) as cur:
+                row = await cur.fetchone()
+            name = _clean_name(name, (row[0] or row[1]) if row else "")
             await db.execute(
                 "UPDATE companies SET name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                 (name, company_id),

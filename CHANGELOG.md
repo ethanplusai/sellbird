@@ -9,6 +9,16 @@ minor versions can still change behaviour.
 
 ### Added
 
+- **Skip companies whose own site names a brand** (`icp.exclude_if_site_mentions`).
+  A retailer for one brand shouldn't pitch a club already wearing it. List
+  the brands (`["acmekit"]`) and, before writing to a prospect, Sellbird reads
+  their homepage and up to six of their own kit, shop, sponsor and about
+  pages; a whole-word mention in text, a link or an image address (including
+  a link to a `<brand>store` shop) marks the prospect `excluded` and no email
+  is written. The sender checks again before anything goes out, so drafts
+  written earlier are caught too. Verdicts are cached per company for 30
+  days; a site that can't be read gives no verdict and is tried again.
+  Off unless you list a brand.
 - **`writer.require_tip: true` skips prospects with nothing to build a tip
   on.** A first email is meant to name one concrete thing the sender would
   change; with no finding about the company, the draft could only say it had no
@@ -189,6 +199,15 @@ minor versions can still change behaviour.
 
 ### Fixed
 
+- **Company names fit to put in an email.** Names come from page titles and
+  URLs, and some reached drafts as "https://www.example.co.uk/'s badge",
+  "Welcome to Example Academy", "Example FC l Ladies l" or "Example Co"
+  (a domain-derived name that took `.co.uk`'s "co" for a word). Every name
+  is now cleaned as it is stored, whichever path found it: a URL becomes the
+  name it spells, "Welcome to" goes, a title is cut at its separator
+  (including a lone "l" typed as a pipe) to the part the domain backs up,
+  and trailing "!" or ":" is dropped. Domain-derived names now skip
+  second-level suffixes (`.co.uk`, `.ac.uk`, `.sch.uk`, ...).
 - **Instantly's daily cap counts your local day, not UTC** (from #177 by
   @solvejet-team), so the cap resets at your midnight.
 
