@@ -227,6 +227,24 @@ class MailboxStore(StateManager):
             await db.commit()
             return cur.rowcount > 0
 
+    async def set_warmup_start(self, mailbox_id: str, started: str) -> bool:
+        """The day this inbox started warming up (YYYY-MM-DD), or "" for an
+        established one."""
+        async with self._connect() as db:
+            cur = await db.execute("UPDATE mailboxes SET warmup_started_at = ? WHERE id = ?",
+                                   (started or None, mailbox_id))
+            await db.commit()
+            return cur.rowcount > 0
+
+    async def set_connection_settings(self, mailbox_id: str, settings: dict) -> bool:
+        """New server settings for an inbox, in place: same id, so its sent
+        mail, threads and campaigns stay with it. Never the password."""
+        async with self._connect() as db:
+            cur = await db.execute("UPDATE mailboxes SET settings_json = ? WHERE id = ?",
+                                   (json.dumps(settings or {}), mailbox_id))
+            await db.commit()
+            return cur.rowcount > 0
+
     async def retire(self, mailbox_id: str) -> bool:
         """Stop using an inbox for good. Its unsent first emails move to
         another inbox at the next send; threads already started there end."""
