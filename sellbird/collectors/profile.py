@@ -107,8 +107,54 @@ BOOKING_HINTS = (r"calendly\.com", r"acuityscheduling", r"schedulicity",
                  r"schedule[-_]?(an?[-_])?(appointment|estimate|consultation)",
                  r"housecallpro", r"getjobber\.com", r"servicetitan")
 
-AI_CRAWLERS = ("gptbot", "google-extended", "ccbot", "anthropic-ai", "claudebot",
-               "perplexitybot", "bytespider")
+# The crawlers an AI assistant sends to read a site for its answers. Blocking
+# only a training crawler (GPTBot, CCBot, Google-Extended, ClaudeBot) keeps a
+# site out of training data, not out of answers, so it isn't counted.
+AI_ANSWER_CRAWLERS = {
+    "oai-searchbot": "ChatGPT", "chatgpt-user": "ChatGPT",
+    "perplexitybot": "Perplexity", "perplexity-user": "Perplexity",
+    "claude-searchbot": "Claude", "claude-user": "Claude",
+}
+_WHOLE_SITE = {"/", "/*"}
+
+
+def _robots_groups(robots: str) -> list[tuple[list[str], list[tuple[str, str]]]]:
+    """robots.txt as (user-agents, [(allow|disallow, path)]) groups."""
+    groups: list[tuple[list[str], list[tuple[str, str]]]] = []
+    for raw in robots.splitlines():
+        field, sep, value = raw.split("#", 1)[0].partition(":")
+        if not sep:
+            continue
+        field, value = field.strip().lower(), value.strip()
+        if field == "user-agent":
+            if not groups or groups[-1][1]:
+                groups.append(([], []))
+            groups[-1][0].append(value.lower())
+        elif field in ("allow", "disallow") and groups:
+            groups[-1][1].append((field, value))
+    return groups
+
+
+def blocked_ai_assistants(robots: str) -> list[str]:
+    """The AI assistants this robots.txt shuts out of the whole site: every
+    crawler they answer with is blocked. A crawler follows its own group if it
+    has one, else ``*``; disallowing one path isn't shutting it out, and
+    neither is ``Disallow: /`` with any path allowed back."""
+    groups = _robots_groups(robots)
+
+    def shut_out(token: str) -> bool:
+        own = [rules for agents, rules in groups
+               if any(a == token or a.startswith(token + "/") for a in agents)]
+        if not own:
+            own = [rules for agents, rules in groups if "*" in agents]
+        rules = [rule for group in own for rule in group]
+        return (any(f == "disallow" and v in _WHOLE_SITE for f, v in rules)
+                and not any(f == "allow" and v for f, v in rules))
+
+    # An assistant still reads the site through any crawler left open.
+    assistants = set(AI_ANSWER_CRAWLERS.values())
+    return sorted(a for a in assistants
+                  if all(shut_out(t) for t, owner in AI_ANSWER_CRAWLERS.items() if owner == a))
 
 TEAM_PATHS = ("/team", "/about", "/about-us", "/our-team", "/staff",
               "/leadership", "/meet-the-team", "/company/team")
@@ -125,6 +171,9 @@ _CAREERS_ANCHOR = re.compile(r"^(careers?|jobs|join us|join (our|the) team|we['�
 # Roles recorded per company from a board. The first few say it; twenty rows
 # of "Account Executive, <city>" don't say more.
 MAX_BOARD_ROLES = 5
+# Sitemaps read under one index: enough for any small business, and a site
+# with more is no thin site.
+MAX_CHILD_SITEMAPS = 10
 CONTACT_PATHS = ("/contact", "/contact-us", "/get-a-quote", "/free-estimate",
                  "/request-estimate", "/quote")
 
@@ -1131,6 +1180,57 @@ class ProfileCollector:
 
     # ── the stage itself ──
 
+    async def _read_sitemap(self, site: str) -> tuple[int, list[str], str]:
+        """(page count, lastmod dates, where it was read) for the site's sitemap.
+
+        robots.txt's Sitemap: lines come first, because a stale leftover
+        /sitemap.xml can sit next to the live index, and every one listed is
+        read: a site can split its pages across several. A sitemap index
+        lists sitemaps, not pages, so each one is read and its pages counted.
+        Nothing is recorded when any of them can't be read or there are more
+        than MAX_CHILD_SITEMAPS: a partial count would tell a prospect their
+        big site is tiny, and partial dates that it's stale.
+        """
+        host = urlparse(site).netloc.lower().removeprefix("www.")
+
+        def same_site(url: str) -> bool:
+            return urlparse(url).netloc.lower().removeprefix("www.") == host
+
+        robots = await self._get(f"{site}/robots.txt")
+        listed = list(dict.fromkeys(
+            u for u in re.findall(r"(?im)^\s*sitemap:\s*(\S+)", robots) if same_site(u)))
+        if listed:
+            roots = listed
+        else:
+            roots = []
+            for url in (f"{site}/sitemap.xml", f"{site}/sitemap_index.xml",
+                        f"{site}/wp-sitemap.xml"):
+                if "<loc>" in await self._get(url):
+                    roots = [url]
+                    break
+        if not roots:
+            return 0, [], f"{site}/sitemap.xml"
+
+        pages, dates, queue, read = 0, [], list(roots), 0
+        while queue:
+            url = queue.pop(0)
+            read += 1
+            if read > MAX_CHILD_SITEMAPS + 1:
+                return 0, [], roots[0]
+            doc = await self._get(url)
+            if re.search(r"<sitemapindex\b", doc, re.I):
+                # One level of index only; an index of indexes is no thin site.
+                if url not in roots:
+                    return 0, [], roots[0]
+                children = [u.strip() for u in re.findall(r"<loc>\s*([^<]+)\s*</loc>", doc)]
+                queue += [u for u in children if same_site(u)]
+            elif "<urlset" in doc:
+                pages += len(re.findall(r"<url>", doc))
+                dates += re.findall(r"<lastmod>\s*(\d{4}-\d{2}-\d{2})", doc)
+            else:
+                return 0, [], roots[0]
+        return pages, dates, roots[0]
+
     async def profile_company(self, company_id: str, domain: str) -> list[dict]:
         """Collect every confirmed profile signal for one business."""
         obs: list[dict] = []
@@ -1241,35 +1341,25 @@ class ProfileCollector:
         if agency:
             add("INCUMBENT_AGENCY", text=agency[0], conf=agency[1], url=agency[2])
 
-        # robots.txt → AI crawler policy
+        # robots.txt → can AI assistants read the site for their answers?
         if self.wants("BLOCKS_AI_CRAWLERS"):
-            robots = (await self._get(f"{site}/robots.txt")).lower()
-            blocked = any(
-                re.search(rf"user-agent:\s*{re.escape(bot)}[\s\S]{{0,200}}?disallow:\s*/",
-                          robots)
-                for bot in AI_CRAWLERS
-            )
-            add("BLOCKS_AI_CRAWLERS", num=1 if blocked else 0,
-                url=f"{site}/robots.txt")
+            assistants = blocked_ai_assistants(await self._get(f"{site}/robots.txt"))
+            add("BLOCKS_AI_CRAWLERS", num=1 if assistants else 0,
+                text=", ".join(assistants), url=f"{site}/robots.txt")
 
-        # sitemap.xml → size + content freshness
+        # sitemap → size + content freshness
         if self.wants("SITE_PAGE_COUNT") or self.wants("BLOG_STALE"):
-            sm = await self._get(f"{site}/sitemap.xml")
-            if sm:
-                locs = re.findall(r"<loc>\s*([^<]+)\s*</loc>", sm)
-                if self.wants("SITE_PAGE_COUNT") and locs:
-                    add("SITE_PAGE_COUNT", num=len(locs), url=f"{site}/sitemap.xml")
-                if self.wants("BLOG_STALE"):
-                    dates = re.findall(r"<lastmod>\s*(\d{4}-\d{2}-\d{2})", sm)
-                    if dates:
-                        newest = max(dates)
-                        try:
-                            age = (datetime.now(timezone.utc).date()
-                                   - datetime.strptime(newest, "%Y-%m-%d").date()).days
-                            add("BLOG_STALE", num=age, text=f"newest content {newest}",
-                                url=f"{site}/sitemap.xml")
-                        except ValueError:
-                            pass
+            pages, dates, where = await self._read_sitemap(site)
+            if self.wants("SITE_PAGE_COUNT") and pages:
+                add("SITE_PAGE_COUNT", num=pages, url=where)
+            if self.wants("BLOG_STALE") and dates:
+                newest = max(dates)
+                try:
+                    age = (datetime.now(timezone.utc).date()
+                           - datetime.strptime(newest, "%Y-%m-%d").date()).days
+                    add("BLOG_STALE", num=age, text=f"newest content {newest}", url=where)
+                except ValueError:
+                    pass
 
         # contact form — reaches the business without needing an email at all
         if self.wants("CONTACT_FORM_URL"):

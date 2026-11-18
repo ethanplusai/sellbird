@@ -7,7 +7,9 @@ import tempfile
 import pytest
 import pytest_asyncio
 
-from sellbird.collectors.profile import ProfileCollector, title_looks_like_role, _strip_code
+from sellbird.collectors.profile import (
+    ProfileCollector, blocked_ai_assistants, title_looks_like_role, _strip_code,
+)
 from sellbird.models.company import Company
 from sellbird.models.prospect import Prospect
 from sellbird.signals import SIGNAL_CATALOG, seed_signal_catalog
@@ -289,3 +291,150 @@ async def test_profile_uses_homepage_brand_over_service_location_title(
         await c.run([{"id": cid, "name": current, "domain": domain}])
     assert (await state.get_company_by_domain(domain)).name == brand
     assert (await state.get_prospect(pid)).company == brand
+
+
+# ── sitemap: an index lists sitemaps, not pages ──
+
+def _sitemap_collector(state, pages):
+    c = collector({"SITE_PAGE_COUNT", "BLOG_STALE"})
+    c.state = state
+    c.challenged = set()
+
+    async def fake_get(url):
+        url = url.rstrip("/")
+        if url in ("https://acme.example", "https://www.acme.example"):
+            return "<html><title>Acme Dental</title><body>Acme</body></html>"
+        return pages.get(url, "")
+    c._get = fake_get
+    return c
+
+
+def _urlset(*entries):
+    rows = "".join(f"<url><loc>{loc}</loc><lastmod>{mod}</lastmod></url>" for loc, mod in entries)
+    return f'<?xml version="1.0"?><urlset>{rows}</urlset>'
+
+
+def _index(*children):
+    rows = "".join(f"<sitemap><loc>{loc}</loc><lastmod>2026-01-01</lastmod></sitemap>" for loc in children)
+    return f'<?xml version="1.0"?><sitemapindex>{rows}</sitemapindex>'
+
+
+def _by_code(obs):
+    return {o["signal_code"]: o for o in obs}
+
+
+@pytest.mark.asyncio
+async def test_sitemap_index_counts_the_pages_in_its_sitemaps(state):
+    base = "https://acme.example"
+    c = _sitemap_collector(state, {
+        f"{base}/sitemap.xml": _index(f"{base}/page-sitemap.xml", f"{base}/post-sitemap.xml"),
+        f"{base}/page-sitemap.xml": _urlset(*[(f"{base}/p{i}", "2025-03-01") for i in range(6)]),
+        f"{base}/post-sitemap.xml": _urlset((f"{base}/news", "2025-04-02")),
+    })
+    obs = _by_code(await c.profile_company("c1", "acme.example"))
+    assert obs["SITE_PAGE_COUNT"]["value_num"] == 7, "two sitemaps are not two pages"
+    assert obs["BLOG_STALE"]["value_text"] == "newest content 2025-04-02"
+
+
+@pytest.mark.asyncio
+async def test_robots_sitemap_wins_over_a_stale_leftover(state):
+    base = "https://acme.example"
+    c = _sitemap_collector(state, {
+        f"{base}/robots.txt": f"User-agent: *\nDisallow:\nSitemap: {base}/sitemap_index.xml\n",
+        f"{base}/sitemap.xml": _urlset((f"{base}/old", "2019-01-01"), (f"{base}/older", "2019-01-02")),
+        f"{base}/sitemap_index.xml": _index(f"{base}/page-sitemap.xml"),
+        f"{base}/page-sitemap.xml": _urlset(*[(f"{base}/p{i}", "2026-06-01") for i in range(9)]),
+    })
+    obs = _by_code(await c.profile_company("c1", "acme.example"))
+    assert obs["SITE_PAGE_COUNT"]["value_num"] == 9
+    assert obs["SITE_PAGE_COUNT"]["evidence_url"] == f"{base}/sitemap_index.xml"
+    assert obs["BLOG_STALE"]["value_text"] == "newest content 2026-06-01"
+
+
+@pytest.mark.asyncio
+async def test_unread_child_sitemap_records_no_page_count(state):
+    base = "https://acme.example"
+    c = _sitemap_collector(state, {
+        f"{base}/sitemap.xml": _index(f"{base}/page-sitemap.xml", f"{base}/post-sitemap.xml"),
+        f"{base}/page-sitemap.xml": _urlset((f"{base}/a", "2026-01-01")),
+        # post-sitemap.xml fails to load: the count would be a guess
+    })
+    obs = _by_code(await c.profile_company("c1", "acme.example"))
+    assert "SITE_PAGE_COUNT" not in obs
+    assert "BLOG_STALE" not in obs, "the unread sitemap may hold the newer pages"
+
+
+@pytest.mark.asyncio
+async def test_every_robots_sitemap_is_counted(state):
+    base = "https://acme.example"
+    c = _sitemap_collector(state, {
+        f"{base}/robots.txt": (f"User-agent: *\nDisallow:\nSitemap: {base}/pages.xml\n"
+                               f"Sitemap: {base}/posts.xml\n"),
+        f"{base}/pages.xml": _urlset(*[(f"{base}/p{i}", "2024-01-01") for i in range(3)]),
+        f"{base}/posts.xml": _urlset(*[(f"{base}/n{i}", "2026-05-01") for i in range(8)]),
+    })
+    obs = _by_code(await c.profile_company("c1", "acme.example"))
+    assert obs["SITE_PAGE_COUNT"]["value_num"] == 11
+    assert obs["BLOG_STALE"]["value_text"] == "newest content 2026-05-01"
+
+
+@pytest.mark.asyncio
+async def test_too_many_sitemaps_records_nothing(state):
+    base = "https://acme.example"
+    children = [f"{base}/s{i}.xml" for i in range(11)]
+    pages = {u: _urlset((f"{u}/a", "2020-01-01")) for u in children[:10]}
+    pages[f"{base}/sitemap.xml"] = _index(*children)
+    c = _sitemap_collector(state, pages)
+    obs = _by_code(await c.profile_company("c1", "acme.example"))
+    assert "SITE_PAGE_COUNT" not in obs
+    assert "BLOG_STALE" not in obs
+
+
+@pytest.mark.asyncio
+async def test_plain_sitemap_still_counts_its_pages(state):
+    base = "https://acme.example"
+    c = _sitemap_collector(state, {
+        f"{base}/sitemap.xml": _urlset((f"{base}/a", "2026-02-01"), (f"{base}/b", "2026-02-03")),
+    })
+    obs = _by_code(await c.profile_company("c1", "acme.example"))
+    assert obs["SITE_PAGE_COUNT"]["value_num"] == 2
+    assert obs["SITE_PAGE_COUNT"]["evidence_url"] == f"{base}/sitemap.xml"
+
+
+# ── robots.txt: only the crawlers AI assistants answer with ──
+
+
+def test_training_crawler_blocks_are_not_answer_blocks():
+    robots = ("User-agent: GPTBot\nDisallow: /\n\nUser-agent: CCBot\nDisallow: /\n\n"
+              "User-agent: Google-Extended\nDisallow: /\n\nUser-agent: *\nDisallow:\n")
+    assert blocked_ai_assistants(robots) == []
+
+
+def test_answer_crawler_block_names_the_assistant():
+    robots = ("User-agent: OAI-SearchBot\nUser-agent: ChatGPT-User\n"
+              "User-agent: PerplexityBot\nUser-agent: Perplexity-User\nDisallow: /\n")
+    assert blocked_ai_assistants(robots) == ["ChatGPT", "Perplexity"]
+
+
+def test_one_open_crawler_still_lets_the_assistant_read():
+    robots = "User-agent: OAI-SearchBot\nDisallow: /\n"
+    assert blocked_ai_assistants(robots) == []
+
+
+def test_a_partial_path_is_not_a_block():
+    robots = "User-agent: *\nDisallow: /private-form\n\nUser-agent: OAI-SearchBot\nDisallow: /admin\n"
+    assert blocked_ai_assistants(robots) == []
+
+
+def test_whole_site_block_for_everyone_counts():
+    assert blocked_ai_assistants("User-agent: *\nDisallow: /\n") == ["ChatGPT", "Claude", "Perplexity"]
+
+
+def test_own_group_overrides_the_wildcard():
+    robots = "User-agent: *\nDisallow: /\n\nUser-agent: OAI-SearchBot\nAllow: /\n"
+    assert "ChatGPT" not in blocked_ai_assistants(robots)
+
+
+def test_a_path_allowed_back_is_not_a_block():
+    robots = "User-agent: *\nDisallow: /\nAllow: /blog/\n"
+    assert blocked_ai_assistants(robots) == []

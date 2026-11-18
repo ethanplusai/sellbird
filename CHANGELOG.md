@@ -189,6 +189,22 @@ minor versions can still change behaviour.
 
 ### Fixed
 
+- **A sitemap index no longer reads as a tiny site.** `SITE_PAGE_COUNT`
+  counted the entries in `/sitemap.xml`, so an index of four sitemaps (Yoast,
+  Wix, WordPress core) became "your sitemap lists only 4 pages" in a first
+  email, on sites with dozens. The profile collector now reads each sitemap
+  in the index and counts their pages, uses every sitemap robots.txt names
+  before a leftover `/sitemap.xml`, and records no count and no dates when
+  one of them can't be read or there are more than ten. `BLOG_STALE` takes
+  its dates from the same pages.
+- **"Blocks AI crawlers" means the assistant really can't read the site.**
+  Blocking a training crawler (GPTBot, CCBot, Google-Extended) counted, and a
+  path like `Disallow: /private-form` could match too, so emails said ChatGPT
+  couldn't read sites it could. `BLOCKS_AI_CRAWLERS` now parses robots.txt
+  groups and is set only when every crawler an assistant answers with
+  (OAI-SearchBot and ChatGPT-User, PerplexityBot and Perplexity-User,
+  Claude-SearchBot and Claude-User) is shut out of the whole site, with no
+  path allowed back, and it names the assistant. Older observations that name none stay out of emails.
 - **Instantly's daily cap counts your local day, not UTC** (from #177 by
   @solvejet-team), so the cap resets at your midnight.
 

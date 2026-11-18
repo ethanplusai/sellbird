@@ -224,7 +224,7 @@ SIGNAL_CATALOG: list[dict] = [
     {
         "code": "BLOCKS_AI_CRAWLERS",
         "label": "Blocks AI crawlers",
-        "description": "robots.txt blocks AI crawlers — they'll be invisible in AI search answers.",
+        "description": "robots.txt shuts out every crawler ChatGPT, Perplexity or Claude reads sites with for its answers (training-only crawlers don't count).",
         "category": "profile",
         "value_type": "bool",
         "collector": "profile",

@@ -56,8 +56,19 @@ async def test_a_signal_checked_and_found_fine_is_not_a_fact(state):
 
 @pytest.mark.asyncio
 async def test_blocked_crawlers_are_a_fact(state):
+    cid = await state.add_company(Company(name="Acme", domain="acme.example"))
+    await state.add_observation(company_id=cid, signal_code="BLOCKS_AI_CRAWLERS",
+                                collector="profile", value_num=1, value_text="ChatGPT")
+    facts = "\n".join(await site_facts(state, cid))
+    assert "crawlers ChatGPT uses to read sites for its answers" in facts
+
+
+@pytest.mark.asyncio
+async def test_a_block_that_names_no_assistant_is_not_a_fact(state):
+    # Recorded before the check named the assistants, when blocking a
+    # training-only crawler counted too.
     cid = await company_with(state, BLOCKS_AI_CRAWLERS=1)
-    assert "blocks AI crawlers" in "\n".join(await site_facts(state, cid))
+    assert await site_facts(state, cid) == []
 
 
 @pytest.mark.asyncio
@@ -166,11 +177,13 @@ async def prompt_for(state, company_id):
 
 @pytest.mark.asyncio
 async def test_the_findings_are_in_the_personal_email_prompt(state):
-    cid = await company_with(state, NO_SCHEMA_MARKUP=1, BLOCKS_AI_CRAWLERS=1)
+    cid = await company_with(state, NO_SCHEMA_MARKUP=1)
+    await state.add_observation(company_id=cid, signal_code="BLOCKS_AI_CRAWLERS",
+                                collector="profile", value_num=1, value_text="Perplexity")
     prompt = await prompt_for(state, cid)
     assert "Site checks" in prompt
     assert "no JSON-LD structured data" in prompt
-    assert "blocks AI crawlers" in prompt
+    assert "crawlers Perplexity uses to read sites" in prompt
 
 
 @pytest.mark.asyncio

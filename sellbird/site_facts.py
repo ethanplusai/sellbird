@@ -48,6 +48,7 @@ async def site_facts(state, company_id: str) -> list[str]:
     except Exception:
         return []
     current = {r.get("signal_code"): r.get("value_num") for r in rows}
+    texts = {r.get("signal_code"): (r.get("value_text") or "").strip() for r in rows}
 
     facts: list[str] = []
     if current.get("NO_SCHEMA_MARKUP") == 1:
@@ -62,8 +63,14 @@ async def site_facts(state, company_id: str) -> list[str]:
     pages = current.get("SITE_PAGE_COUNT")
     if pages is not None and 0 < pages <= THIN_PAGES:
         facts.append(f"  - Their sitemap.xml lists only {int(pages)} page(s)")
-    if current.get("BLOCKS_AI_CRAWLERS") == 1:
+    # Only a block that names the assistant: one recorded before the check
+    # named them may have been a training-only crawler, which answers ignore.
+    blocked = [a.strip() for a in texts.get("BLOCKS_AI_CRAWLERS", "").split(",") if a.strip()]
+    if current.get("BLOCKS_AI_CRAWLERS") == 1 and blocked:
+        who = " and ".join(blocked)
+        uses = "uses" if len(blocked) == 1 else "use"
         facts.append(
-            "  - Their robots.txt blocks AI crawlers, so AI search answers can't "
-            "read their site")
+            f"  - Their robots.txt shuts out the crawlers {who} {uses} to read sites "
+            f"for {'its' if len(blocked) == 1 else 'their'} answers, so "
+            f"{'it' if len(blocked) == 1 else 'they'} can't read their site")
     return [HEADER] + facts if facts else []
