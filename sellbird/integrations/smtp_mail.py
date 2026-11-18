@@ -32,7 +32,12 @@ from sellbird.integrations.mail_provider import (
     identity_from_config,
     looks_like_bounce,
 )
-from sellbird.integrations.signature import SignatureError, load_signature, set_body
+from sellbird.integrations.signature import (
+    SignatureError,
+    load_signature,
+    set_body,
+    wants_html_copy,
+)
 
 _AUTO_REPLY_HEADERS = ("Auto-Submitted", "X-Autoreply", "X-Autorespond", "X-Autoresponse",
                        "Precedence")
@@ -121,7 +126,7 @@ class SmtpImapProvider(MailProvider):
         if in_reply_to:
             msg["In-Reply-To"] = in_reply_to
             msg["References"] = in_reply_to
-        set_body(msg, body, sig)
+        set_body(msg, body, sig, wants_html_copy(self.config))
 
         try:
             await aiosmtplib.send(

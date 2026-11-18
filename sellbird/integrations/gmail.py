@@ -39,7 +39,12 @@ from sellbird.integrations.mail_provider import (
     missing_token_text,
     save_if_signed_in_as,
 )
-from sellbird.integrations.signature import SignatureError, load_signature, set_body
+from sellbird.integrations.signature import (
+    SignatureError,
+    load_signature,
+    set_body,
+    wants_html_copy,
+)
 
 logger = logging.getLogger("sellbird.gmail")
 
@@ -257,7 +262,7 @@ class GmailProvider(MailProvider):
         if in_reply_to:
             msg["In-Reply-To"] = in_reply_to
             msg["References"] = in_reply_to
-        set_body(msg, body, sig)
+        set_body(msg, body, sig, wants_html_copy(self.config))
 
         raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
         payload: dict = {"raw": raw}

@@ -49,7 +49,13 @@ from sellbird.integrations.mail_provider import (
     missing_token_text,
     save_if_signed_in_as,
 )
-from sellbird.integrations.signature import SignatureError, load_signature, render_html
+from sellbird.integrations.signature import (
+    SignatureError,
+    load_signature,
+    render_html,
+    render_plain_html,
+    wants_html_copy,
+)
 
 logger = logging.getLogger("sellbird.microsoft")
 
@@ -278,8 +284,10 @@ class MicrosoftProvider(MailProvider):
     ) -> SendResult:
         """Draft, then send, so the RFC Message-ID is known (bounces and
         replies are matched on it). A reply is drafted with createReply on
-        the prospect's message, which sets In-Reply-To/References. With a
-        signature, the body is HTML and the logo is attached inline."""
+        the prospect's message, which sets In-Reply-To/References. The body
+        is the text's bare HTML copy (Exchange adds the plain text), or plain
+        text with html_copy off; with a signature, HTML with the logo
+        attached inline."""
         if headers:  # Graph sets its own; carries_headers is False
             return SendResult(ok=False, error="Microsoft 365 can't add custom headers")
         try:
@@ -289,6 +297,8 @@ class MicrosoftProvider(MailProvider):
         content = {
             "subject": subject,
             "body": ({"contentType": "HTML", "content": render_html(body, sig)} if sig
+                     else {"contentType": "HTML", "content": render_plain_html(body)}
+                     if wants_html_copy(self.config)
                      else {"contentType": "Text", "content": body}),
             "toRecipients": [{"emailAddress": {"address": to_email}}],
         }

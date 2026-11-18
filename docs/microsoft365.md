@@ -96,10 +96,11 @@ To make sure nobody else in the tenant can use the app, go to
 ## How it behaves
 
 - **Sending.** Sellbird creates a draft and then sends it, so the email's
-  RFC `Message-ID` is known. Bounces and replies are matched on it. Bodies
-  are plain text, unless `channels.email.signature.logo` is set: then the
-  body is HTML and the logo is added to the draft as an inline attachment
-  before it's sent. Outlook's own signature isn't added to mail sent
+  RFC `Message-ID` is known. Bounces and replies are matched on it. The
+  body is a bare HTML copy of Sellbird's text, and Exchange adds the plain
+  text beside it (`channels.email.html_copy: false` sends plain text only).
+  With `channels.email.signature.logo` set, the body is HTML with the logo
+  added to the draft as an inline attachment before it's sent. Outlook's own signature isn't added to mail sent
   through Graph, so this is the way to put a logo under Sellbird's email.
 - **Replies are threaded.** Sellbird answers with `createReply` on the
   prospect's own message, so `In-Reply-To` and `References` are correct. If

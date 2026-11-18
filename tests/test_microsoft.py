@@ -10,6 +10,7 @@ import pytest
 
 from sellbird.integrations import microsoft
 from sellbird.integrations.microsoft import GraphError, MicrosoftProvider
+from sellbird.integrations.signature import render_plain_html
 
 
 class Env:
@@ -129,7 +130,7 @@ async def test_refresh_token_rotates_and_is_saved(graph):
 
 
 @pytest.mark.asyncio
-async def test_new_email_is_drafted_then_sent_as_plain_text(graph):
+async def test_new_email_is_drafted_then_sent_with_its_html_copy(graph):
     result = await provider(graph).send_email("jane@acme.com", "booking", "Hi Jane.")
 
     assert result.ok
@@ -141,8 +142,22 @@ async def test_new_email_is_drafted_then_sent_as_plain_text(graph):
     ]
     [draft] = [json.loads(r.content) for r in graph.requests
                if r.method == "POST" and r.url.path == "/v1.0/me/messages"]
-    assert draft["body"] == {"contentType": "Text", "content": "Hi Jane."}
+    # A bare HTML copy of the text: Exchange adds the plain text beside it,
+    # and Gmail readers don't see a plain-text-only email cut into short lines.
+    assert draft["body"] == {"contentType": "HTML", "content": render_plain_html("Hi Jane.")}
     assert draft["toRecipients"] == [{"emailAddress": {"address": "jane@acme.com"}}]
+
+
+@pytest.mark.asyncio
+async def test_html_copy_off_sends_plain_text(graph):
+    from types import SimpleNamespace
+    cfg = SimpleNamespace(channels=SimpleNamespace(email=SimpleNamespace(html_copy=False)))
+    p = MicrosoftProvider(config=cfg, env=Env(), transport=httpx.MockTransport(graph))
+
+    assert (await p.send_email("jane@acme.com", "booking", "Hi Jane.")).ok
+    [draft] = [json.loads(r.content) for r in graph.requests
+               if r.method == "POST" and r.url.path == "/v1.0/me/messages"]
+    assert draft["body"] == {"contentType": "Text", "content": "Hi Jane."}
 
 
 @pytest.mark.asyncio
@@ -160,7 +175,7 @@ async def test_reply_is_threaded_with_create_reply(graph):
         ("POST", "/v1.0/me/messages/reply1/send"),
     ]
     [patch] = [json.loads(r.content) for r in graph.requests if r.method == "PATCH"]
-    assert patch["body"]["content"] == "Tuesday works."
+    assert patch["body"]["content"] == render_plain_html("Tuesday works.")
     assert patch["toRecipients"][0]["emailAddress"]["address"] == "jane@acme.com"
 
 

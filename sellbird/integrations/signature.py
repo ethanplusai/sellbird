@@ -1,10 +1,17 @@
-"""A logo under every email the native providers send.
+"""The body the native providers send: plain text, its HTML copy, and an
+optional logo under every email.
 
-Off by default: email goes out as plain text. With
-``channels.email.signature.logo`` set, Gmail, Microsoft 365 and SMTP send
-each email as HTML, with the logo embedded in the message itself (an inline
-``cid:`` image), so it shows without the recipient allowing remote images.
-Gmail and SMTP also carry the same plain text as the HTML's alternative.
+By default each email is its plain text plus a bare HTML copy of the same
+text (``channels.email.html_copy``), the shape Gmail's own Compose sends:
+no styling, no images, no links but the ones already in the text. Gmail
+shows a plain-text-only email cut into lines of about 78 characters,
+mid-sentence; the HTML copy flows to the reader's screen instead.
+
+With ``channels.email.signature.logo`` set, Gmail, Microsoft 365 and SMTP
+send each email as HTML with the logo embedded in the message itself (an
+inline ``cid:`` image), so it shows without the recipient allowing remote
+images. Gmail and SMTP also carry the same plain text as the HTML's
+alternative.
 
 The words are the ones Sellbird wrote, unchanged: the HTML is that text,
 escaped, with its paragraphs and line breaks kept and its web addresses made
@@ -110,11 +117,26 @@ def signature_problem(config) -> str:
     return ""
 
 
+def wants_html_copy(config) -> bool:
+    """channels.email.html_copy; True for configs from before it existed."""
+    email = getattr(getattr(config, "channels", None), "email", None)
+    return getattr(email, "html_copy", True) is not False
+
+
+def render_plain_html(body: str) -> str:
+    """The email's bare HTML copy, written the way Gmail's Compose writes
+    one: Sellbird's text, escaped, with its paragraphs and line breaks kept
+    and its web addresses made clickable. Nothing else: no styling, no
+    images, no link the text doesn't already have."""
+    paragraphs = "<div><br></div>\n".join(
+        f"<div>{_paragraph(p)}</div>\n" for p in _paragraphs(body))
+    return f'<div dir="auto">\n{paragraphs}</div>\n'
+
+
 def render_html(body: str, sig: Signature) -> str:
     """The email as HTML: Sellbird's text, then the logo."""
-    paragraphs = [p for p in re.split(r"\n[ \t]*\n", body.replace("\r\n", "\n").strip()) if p.strip()]
     text = "\n".join(
-        f'<p style="margin:0 0 1em 0">{_paragraph(p)}</p>' for p in paragraphs
+        f'<p style="margin:0 0 1em 0">{_paragraph(p)}</p>' for p in _paragraphs(body)
     )
     height = f' height="{sig.height}"'
     img = (
@@ -140,11 +162,14 @@ def render_html(body: str, sig: Signature) -> str:
     )
 
 
-def set_body(msg: EmailMessage, body: str, sig: Signature | None):
-    """Plain text alone, or with a signature: plain text plus an HTML
-    alternative that carries the logo as an inline image."""
+def set_body(msg: EmailMessage, body: str, sig: Signature | None, html_copy: bool = True):
+    """Plain text plus its bare HTML copy; plain text alone when html_copy
+    is off; with a signature, plain text plus an HTML alternative that
+    carries the logo as an inline image."""
     msg.set_content(body)
     if sig is None:
+        if html_copy:
+            msg.add_alternative(render_plain_html(body), subtype="html")
         return
     msg.add_alternative(render_html(body, sig), subtype="html")
     maintype, subtype = sig.mime.split("/")
@@ -152,6 +177,10 @@ def set_body(msg: EmailMessage, body: str, sig: Signature | None):
         sig.data, maintype=maintype, subtype=subtype,
         cid=f"<{sig.content_id}>", filename=sig.filename, disposition="inline",
     )
+
+
+def _paragraphs(body: str) -> list[str]:
+    return [p for p in re.split(r"\n[ \t]*\n", body.replace("\r\n", "\n").strip()) if p.strip()]
 
 
 def _paragraph(text: str) -> str:

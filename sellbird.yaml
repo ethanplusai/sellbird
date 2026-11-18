@@ -84,8 +84,12 @@ channels:
     #   end: "17:00"
     #   weekdays_only: true      # Monday to Friday, in every country
     #   recipient_timezone: true  # false: one zone for everyone (quiet_hours.timezone)
+    # Plain text plus a bare HTML copy of it, as Gmail's Compose sends: no
+    # styling or images. Gmail shows plain-text-only email cut into ~78-char
+    # lines mid-sentence. false = plain text only. Gmail/Microsoft/SMTP only.
+    html_copy: true
     # A logo under every email, cold or reply: the email goes out as HTML
-    # with the image embedded. Blank logo = plain text, as before. If the
+    # with the image embedded. Blank logo = plain text + its HTML copy. If the
     # file can't be used, approved email waits instead of going out without
     # it. Gmail/Microsoft/SMTP only.
     # Plain text usually lands better for cold email: images and HTML can push

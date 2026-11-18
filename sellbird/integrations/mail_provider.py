@@ -204,7 +204,8 @@ class MailProvider(ABC):
         in_reply_to: str = "",
         headers: Sequence[tuple[str, str]] = (),
     ) -> SendResult:
-        """Send one plain-text email. Reply threading when refs are given.
+        """Send one email written as plain text (the native providers add
+        its HTML copy, see signature.py). Reply threading when refs are given.
         ``headers`` are extra headers (only passed when ``carries_headers``)."""
 
     @abstractmethod

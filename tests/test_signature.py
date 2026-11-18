@@ -19,8 +19,10 @@ from sellbird.integrations.signature import (
     SignatureError,
     load_signature,
     render_html,
+    render_plain_html,
     set_body,
     signature_problem,
+    wants_html_copy,
 )
 from email.message import EmailMessage
 
@@ -154,6 +156,24 @@ def test_html_logo_direction_and_link(logo):
     assert 'dir="auto"' in render_html("hi", load_signature(config(logo=str(logo))))
 
 
+def test_plain_html_copy_is_the_text_and_nothing_else():
+    body = ("Hi Jane,\n\nWe noticed <b>your</b> studio & caf\u00e9.\nSecond line.\n\n\n"
+            "Book here: https://acme.example/book?a=1&b=2.\n\nSam")
+    out = render_plain_html(body)
+
+    assert "<b>your</b>" not in out
+    assert "&lt;b&gt;your&lt;/b&gt; studio &amp; caf\u00e9.<br>\nSecond line." in out
+    assert out.count("<div>") == 7  # 4 paragraphs, 3 blank lines between them
+    assert out.count("<div><br></div>") == 3
+    assert ('<a href="https://acme.example/book?a=1&amp;b=2">'
+            'https://acme.example/book?a=1&amp;b=2</a>.') in out
+    # Bare, like Gmail's Compose: no styling, images, or links of its own.
+    for extra in ("style=", "<img", "<p", "font", "<html", "<head"):
+        assert extra not in out
+    assert out.count("<a href=") == 1
+    assert out.startswith('<div dir="auto">')
+
+
 # ── MIME (Gmail, SMTP) ──
 
 
@@ -175,10 +195,36 @@ def test_mime_carries_plain_text_html_and_the_inline_logo(logo):
     assert image.get_content() == logo.read_bytes()
 
 
-def test_mime_without_signature_is_plain_text():
+def test_mime_without_signature_is_plain_text_and_its_html_copy():
+    # Gmail cuts a plain-text-only email into ~78-character lines; the HTML
+    # copy is what lets it flow, as with mail written in Gmail itself.
+    body = "Hi Jane,\n\n" + "A long line well past seventy-eight characters, " * 3 + "\n\nSam"
     msg = EmailMessage()
-    set_body(msg, "Hi Jane.", None)
+    set_body(msg, body, None)
+    parsed = email.message_from_bytes(msg.as_bytes(), policy=email.policy.default)
+
+    assert parsed.get_content_type() == "multipart/alternative"
+    plain, html_part = parsed.get_payload()
+    assert plain.get_content_type() == "text/plain"
+    assert plain.get_content().rstrip("\n") == body
+    assert html_part.get_content_type() == "text/html"
+    assert html_part.get_content() == render_plain_html(body)
+
+
+def test_mime_html_copy_off_is_plain_text_only():
+    msg = EmailMessage()
+    set_body(msg, "Hi Jane.", None, html_copy=False)
     assert msg.get_content_type() == "text/plain"
+
+
+def test_html_copy_setting():
+    on = SimpleNamespace(channels=SimpleNamespace(email=SimpleNamespace(html_copy=True)))
+    off = SimpleNamespace(channels=SimpleNamespace(email=SimpleNamespace(html_copy=False)))
+    assert wants_html_copy(on) and not wants_html_copy(off)
+    # Configs from before the setting existed, and no config at all: on.
+    assert wants_html_copy(config()) and wants_html_copy(None)
+    from sellbird.config import EmailChannelConfig
+    assert EmailChannelConfig().html_copy is True
 
 
 @pytest.mark.asyncio
@@ -235,6 +281,37 @@ async def test_unusable_logo_sends_nothing(tmp_path, provider, monkeypatch):
         smtp_mail.aiosmtplib.send.assert_not_called()
     else:
         p._request.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider", ["smtp", "gmail"])
+@pytest.mark.parametrize("html_copy, shape", [(True, "multipart/alternative"), (False, "text/plain")])
+async def test_unsigned_email_follows_html_copy(provider, html_copy, shape, monkeypatch):
+    import base64
+    from sellbird.integrations import gmail, smtp_mail
+    cfg = config()
+    cfg.channels.email.html_copy = html_copy
+    cfg.persona = SimpleNamespace(name="Sam", email="sam@sender.example", company="Acme")
+    sent = []
+    async def fake_send(msg, **kwargs):
+        sent.append(msg)
+    monkeypatch.setattr(smtp_mail.aiosmtplib, "send", fake_send)
+    if provider == "smtp":
+        p = smtp_mail.SmtpImapProvider(cfg, SimpleNamespace(
+            smtp_host="smtp.sender.example", smtp_port=587,
+            smtp_username="sam@sender.example", smtp_password="x"))
+    else:
+        p = gmail.GmailProvider(cfg, SimpleNamespace())
+        p._request = AsyncMock(side_effect=[{"id": "g1", "threadId": "t1"}, None])
+
+    result = await p.send_email("jane@acme.example", "hi", "Hi Jane.")
+
+    assert result.ok
+    if provider == "gmail":
+        raw = p._request.call_args_list[0].kwargs["json"]["raw"]
+        sent.append(email.message_from_bytes(base64.urlsafe_b64decode(raw),
+                                             policy=email.policy.default))
+    assert sent[0].get_content_type() == shape
 
 
 # ── the outbox ──

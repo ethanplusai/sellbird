@@ -51,6 +51,13 @@ minor versions can still change behaviour.
   timezone is Europe/London is told the check is recommended for them and
   offered GB as their country; it still waits for their yes. The docs say a
   new key's 14 days at 100 checks a day start at its first check.
+- **Email no longer arrives cut into short lines in Gmail.** Gmail shows an
+  email that is plain text only cut into lines of about 78 characters, often
+  mid-sentence, whatever the encoding (`format=flowed` included). Gmail,
+  Microsoft and SMTP now send each email as its plain text plus a bare HTML
+  copy of the same words, the shape Gmail's own Compose sends: no styling,
+  images or links the text doesn't have. `channels.email.html_copy: false`
+  keeps plain text only.
 - Seeding the signal catalog writes only a signal that is missing or whose catalog text changed. The dashboard seeds on every Today load, so this was a write per signal on every page view.
 - **The opt-out line takes any wording.** `compliance.opt_out_line` no longer
   has to ask for a keyword: "Not interested? Just let me know and I won't email

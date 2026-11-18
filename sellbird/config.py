@@ -216,8 +216,8 @@ def operator_timezone(config) -> str:
 class SignatureConfig(BaseModel):
     """A logo under every email (see sellbird/integrations/signature.py).
 
-    Empty ``logo``: no signature, and email goes out as plain text, as
-    before. Gmail, Microsoft and SMTP only.
+    Empty ``logo``: no signature, and email goes out as plain text plus a
+    bare HTML copy (``html_copy``). Gmail, Microsoft and SMTP only.
     """
 
     logo: str = ""            # PNG, JPEG or GIF; relative to the project folder, or absolute
@@ -302,6 +302,12 @@ class EmailChannelConfig(BaseModel):
     send_window: SendWindowConfig | None = None
     # A logo under every email (see SignatureConfig). Native providers only.
     signature: SignatureConfig = SignatureConfig()
+    # Send each email with a bare HTML copy of its text beside the plain
+    # text, as Gmail's own Compose does. Gmail shows a plain-text-only email
+    # cut into lines of about 78 characters; the HTML copy flows to the
+    # reader's screen. False sends plain text only. A signature logo always
+    # sends HTML. Native providers only.
+    html_copy: bool = True
 
     @field_validator("warmup", mode="before")
     @classmethod
