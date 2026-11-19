@@ -27,7 +27,7 @@ The sidebar is grouped by what you're doing: **Work** (what needs you), **Pipeli
 - **Conversations** — every reply in the context of the emails that led to it. Threads Sellbird handed to you (a contract request, a reply it had no safe answer for) come first, with **Hand back to Sellbird**, **Close** and **Reopen**.
 
 **Pipeline**
-- **Signals** — the confirmation gate and the cohort builder
+- **Signals** — the confirmation gate and "Filter companies by signal" (the cohort builder)
 - **Discover** — the provider menu with prices side by side, an estimate, then a run; plus reading the sites of companies found but not yet looked at
 - **Companies / Contacts** — everything found, searchable, with CSV export. Companies are sorted by a 0-100 fit score and show their status (emailed, draft waiting, or why not contacted); click one for its details card, or export the whole company register
 - **Campaigns** — each sequence Sellbird wrote, who it's going to, and per-campaign feedback for the writer
