@@ -50,7 +50,7 @@ from sellbird.integrations.linkedin import LinkedInAutomation
 from sellbird.models.company import Company
 from sellbird.models.prospect import COMPANY_INBOX_SOURCE, Prospect
 from sellbird.public_http import public_http_client
-from sellbird.state import StateManager
+from sellbird.state import FREE_MAIL_DOMAINS, StateManager
 from sellbird.untrusted import UNTRUSTED_RULE, fence
 
 logger = logging.getLogger("sellbird.scout")
@@ -95,10 +95,48 @@ LOCAL_BUSINESS_SOURCES = ("discover:osm", "discover:dataforseo_listings")
 # allowlist, not a blocklist: a personal address (jane.doe@) on a contact
 # page is a person Sellbird chose not to target, never "the team".
 INBOX_PAGES = ("/contact", "/contact-us")
-INBOX_PREFERRED = ("owner", "office", "info", "contact", "contactus", "hello",
-                   "team", "service", "sales", "estimates", "quotes",
-                   "inquiries", "enquiries", "admin", "support")
+# Tried only on a Spanish-language site, so they don't spend an English
+# site's request budget (MAX_SITE_FETCHES).
+INBOX_PAGES_ES = ("/contacto", "/contactenos", "/contactanos")
+_SPANISH_SITE = re.compile(r"""<html[^>]*\blang=["']?es\b|cont[aá]ct[ae]nos|\bcontacto\b""", re.I)
+# English and Spanish names for the same mailboxes, most likely read by
+# the owner first.
+INBOX_PREFERRED = ("owner", "gerencia", "gerente", "office", "oficina",
+                   "administracion", "info", "informacion", "contact",
+                   "contacto", "contactus", "contactenos", "contactanos",
+                   "hello", "hola", "team", "equipo", "service", "servicio",
+                   "servicioalcliente", "sales", "ventas", "comercial",
+                   "citas", "reservas", "pedidos", "estimates", "quotes",
+                   "cotizaciones", "inquiries", "enquiries", "admin", "support",
+                   "soporte")
 MAX_PROSPECTS_PER_CYCLE = 25
+
+
+def _alnum(text: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", (text or "").lower())
+
+
+def _business_free_mail(addresses: list[str], domain: str) -> str:
+    """The business's own free-mail inbox among addresses its site publishes.
+
+    The only free-mail address on the site is taken as the business's.
+    With several, one counts only when it looks like the business's: a
+    general mailbox name (info@, ventas@) or the site's name in the
+    mailbox (barberialords@ on barberialords.com). Anything else could be
+    a staff member's or the web designer's, so none is used.
+    """
+    if not addresses:
+        return ""
+    if len(addresses) == 1:
+        return addresses[0]
+    label = _alnum(domain.split(".")[0])
+    for addr in addresses:
+        local = _alnum(addr.partition("@")[0])
+        if addr.partition("@")[0] in INBOX_PREFERRED:
+            return addr
+        if len(label) >= 4 and len(local) >= 4 and (label in local or local in label):
+            return addr
+    return ""
 
 # Hunter domain-searches per heartbeat. The monthly budget itself is shared
 # with email-pattern lookups and set by HUNTER_MONTHLY_SEARCHES (see
@@ -1798,6 +1836,13 @@ Respond ONLY with the JSON array."""
         among them), the whole page, not just its top, decoding obfuscated
         addresses. An address on another domain counts only when that
         domain is clearly the business's own (it lands on this site).
+
+        Many small businesses run on a free mailbox (barberia.x@gmail.com)
+        and print it on their own site. When the site publishes no address
+        on its own domain, such a free-mail address is used if it is the
+        only one the site publishes, or if it looks like the business's
+        (a general mailbox name, or the site's name in it). It is verified
+        before sending like any other.
         """
         site = await self._read_site(domain)
         if not site["base"]:
@@ -1805,7 +1850,9 @@ Respond ONLY with the JSON array."""
         domain = self._host(domain)
         pages = list(site["pages"])
         if not any("contact" in url.lower() for url, _ in pages[1:]):
-            for path in INBOX_PAGES:
+            home = pages[0][1] if pages else ""
+            paths = INBOX_PAGES + (INBOX_PAGES_ES if _SPANISH_SITE.search(home or "") else ())
+            for path in paths:
                 url = f"{site['base']}{path}"
                 if people_mod._norm_url(url) in site["tried"]:
                     continue
@@ -1815,19 +1862,24 @@ Respond ONLY with the JSON array."""
                     pages.append((url, getattr(resp, "text", "") or ""))
 
         candidates = []
+        free_mail = []
         for _, text in pages:
             for addr in people_mod.emails_on_page(text):
                 local, _, adomain = addr.partition("@")
+                adomain = adomain.removeprefix("www.")
+                if adomain in FREE_MAIL_DOMAINS:
+                    if addr not in free_mail:
+                        free_mail.append(addr)
+                    continue
                 if local not in INBOX_PREFERRED or addr in candidates:
                     continue
-                adomain = adomain.removeprefix("www.")
                 if adomain != domain and not adomain.endswith("." + domain) \
                         and not await self._is_own_domain(adomain, site):
                     continue
                 candidates.append(addr)
-        if not candidates:
-            return ""
-        return min(candidates, key=lambda a: INBOX_PREFERRED.index(a.partition("@")[0]))
+        if candidates:
+            return min(candidates, key=lambda a: INBOX_PREFERRED.index(a.partition("@")[0]))
+        return _business_free_mail(free_mail, domain)
 
     async def _is_own_domain(self, other: str, site: dict) -> bool:
         """Is ``other`` the business's own second domain? True when its
