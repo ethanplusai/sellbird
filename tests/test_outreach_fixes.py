@@ -31,7 +31,6 @@ def test_register_names_are_tidied_for_the_email():
     assert spoken_company("Example Homecare Ltd") == "Example Homecare"
     assert spoken_company("Example Care Solutions - Main Office") == "Example Care Solutions"
     assert spoken_company("EXAMPLE CARE (UK) LIMITED") == "Example Care (UK)"
-    assert spoken_company("Example Care \ufffd Hill Lodge") == "Example Care – Hill Lodge"
     assert spoken_company("Example & Sons Care") == "Example & Sons Care"
 
 

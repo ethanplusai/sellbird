@@ -51,7 +51,7 @@ _KEEP_UPPER = {"UK", "NHS", "CIC", "GP", "NW", "NE", "SE", "SW", "HQ", "LD", "AB
 
 def spoken_company(name: str) -> str:
     """The company's name as a person would say it in an email."""
-    name = (name or "").replace("�", "–").strip()
+    name = (name or "").strip()
     name = _BRANCH.sub("", name)
     for _ in range(2):  # "Acme Care Ltd." or "Acme (UK) Limited LLP"
         name = _LEGAL.sub("", name).strip()
