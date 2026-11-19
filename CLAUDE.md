@@ -295,6 +295,8 @@ These go in `sellbird.yaml` under `usage:`. Use sensible defaults unless they wa
 - `quiet_hours`: 22:00-07:00 in their timezone
 - `max_daily_sends`: 50 (email send limit)
 
+Prospecting volume has its own optional `prospecting:` block (defaults: 3 searches, 10 companies, 25 prospects per source, 1 Hunter lookup, 2 people per company and 25 websites read per cycle; a 20-prospect unusable-email pause). Raising them spends search and verifier credits faster, and `prospect_backlog` should go up with them. `prospect_while_writing: true` lets a writing cycle find new prospects too. Only change these when the user asks for more volume; docs/configuration.md explains each.
+
 ### Step 7: Cold-Email Check (Optional)
 
 Offer this once, briefly, and take no for an answer. With `compliance.precleared.enabled: true`, Sellbird asks [Precleared](https://precleared.dev) which cold-email rules apply to each new address before the first email goes out. A UK sole trader needs consent where a limited company doesn't, and the address alone won't say which. Anything that isn't `ok_to_email` waits in the Outbox with the reason. It checks mail sent through Gmail, Microsoft 365 or SMTP, not Instantly. Precleared receives each new recipient's address, the sender country, the address source, the product description and the recipient's country when Sellbird is sure of it from the company's location (a country or state named there), else the prospects' country if there is one (`prospect_country`, or the one country every `icp.geography` entry is in), plus the company's name and the person's name when Sellbird has them, to find a UK company on the register. `docs/precleared.md` explains the check in full.

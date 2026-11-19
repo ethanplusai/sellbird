@@ -109,6 +109,26 @@ usage:
     end: "07:00"
     timezone: "America/New_York"
 
+# How much the heartbeat finds each cycle. Everything here is optional: these
+# are the defaults. Raising the limits finds more people a cycle and spends
+# search, verifier and Hunter credits faster. One cycle is still cut off after
+# 10 minutes, so very large limits mostly mean cut-off cycles, not more people.
+prospecting:
+  max_queries_per_cycle: 3      # web searches per cycle (0 = none)
+  max_companies_per_cycle: 10   # companies one discovery pass reads
+  max_prospects_per_cycle: 25   # prospects added before Scout stops, per source
+  hunter_domains_per_cycle: 1   # Hunter domain searches per cycle (0 = none)
+  max_contacts_per_company: 2   # decision makers taken from one website
+  max_profiles_per_cycle: 25    # company websites read per cycle (free, no model call)
+  # Prospecting pauses for about a day once this many prospects with no usable
+  # email (a guess, invalid or missing) were found in the last 24 hours. Raise
+  # it with the limits above, or it pauses sooner.
+  prospect_backlog: 20
+  # Off: a cycle either writes or prospects, and writing wins whenever someone
+  # is ready to write to. On: a writing cycle also prospects, in parallel.
+  # More Claude calls a cycle, still inside max_daily_claude_percent and quiet hours.
+  prospect_while_writing: false
+
 # Optional: check each new recipient with Precleared (precleared.dev) before
 # the first cold email: may cold marketing email go to this address under the
 # rules of the recipient's country (UK PECR, US CAN-SPAM, Canada's CASL,
