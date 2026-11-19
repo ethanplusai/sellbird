@@ -9,6 +9,23 @@ minor versions can still change behaviour.
 
 ### Added
 
+- **Every inbox shows one clear status from a real check.** The Inboxes tab
+  replaces the "Sending" pill (which only meant connected and not paused) with
+  one status: Ready, Warming up, Needs attention, Not checked, Paused or Not
+  connected. Check connection now signs in (no email is sent), reads the
+  domain's MX, SPF, DKIM and DMARC records and looks at warmup, and says what
+  passed, what failed and how to fix it. The result is kept, shown on hover
+  and in the inbox, with Check again, Check all and when it last ran.
+  `sellbird inboxes` prints the same status.
+- **Inboxes can be edited.** Opening an inbox shows its settings and an Edit
+  settings form: sender name, warmup date and daily cap, and for SMTP the
+  server, port, username, IMAP server and a masked password you can replace.
+  Google and Microsoft inboxes can sign in again. Saving signs in first and
+  saves nothing if that fails (unless you choose Save anyway), then runs the
+  check again. The inbox keeps its id, so its sending history stays with it.
+- **An SMTP inbox is checked before it is added.** A refused sign-in is shown
+  in the form with the fix, and nothing is saved.
+
 - **`writer.require_tip: true` skips prospects with nothing to build a tip
   on.** A first email is meant to name one concrete thing the sender would
   change; with no finding about the company, the draft could only say it had no

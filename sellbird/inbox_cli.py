@@ -13,6 +13,7 @@ import getpass
 import sys
 from datetime import date
 
+from sellbird import inbox_health
 from sellbird.mailboxes import (
     HARD_MAX_INBOX_CAP, MAIN, ConnectRefused, MailboxStore, build_provider,
     check_provider_allows_inboxes, connect_oauth_mailbox, connect_smtp_mailbox, load_inboxes,
@@ -91,6 +92,10 @@ def register(subparsers) -> None:
     sub.set_defaults(func=cmd_inboxes)
 
 
+STATE_LABELS = {"not_connected": "not connected", "needs_attention": "needs attention",
+                "warming": "warming up", "not_checked": "not checked"}
+
+
 async def print_inbox_list(store: MailboxStore, config, env) -> None:
     from sellbird.integrations.mail_provider import NATIVE_PROVIDERS, get_mail_provider
 
@@ -104,12 +109,11 @@ async def print_inbox_list(store: MailboxStore, config, env) -> None:
     print(f"\n  {'Inbox':38} {'State':16} Cold today")
     for inbox in inboxes.inboxes.values():
         label = f"{inbox.address or '(main mailbox)'}{' (main)' if inbox.main and inbox.address else ''}"
-        if not inbox.connected:
-            state = "not connected"
-        elif inbox.paused_reason:
-            state = "paused"
-        else:
-            state = "sending"
+        # The same state the dashboard shows, from its last Check connection.
+        health = await inbox_health.load_result(store, "main" if inbox.main else inbox.id)
+        state = inbox_health.inbox_state(connected=inbox.connected,
+                                         paused=bool(inbox.paused_reason), health=health)
+        state = STATE_LABELS.get(state, state)
         print(f"  {label:38} {state:16} {inbox.sent_today}/{inbox.cap}")
         if inbox.paused_reason:
             print(f"  {'':38} {inbox.paused_reason}")
