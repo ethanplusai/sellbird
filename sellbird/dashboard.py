@@ -1205,7 +1205,8 @@ def _state():
 
 # What a reviewer needs next to a draft to check its claims against the facts.
 OUTBOX_CONTEXT_SIGNALS = (
-    "TECH_STACK", "INCUMBENT_AGENCY", "HIRING_ROLE", "RUNNING_GOOGLE_ADS", "NO_ONLINE_BOOKING",
+    "TECH_STACK", "INCUMBENT_AGENCY", "HIRING_ROLE", "RUNNING_GOOGLE_ADS", "RUNNING_META_ADS",
+    "NO_ONLINE_BOOKING",
 )
 
 
@@ -1232,6 +1233,9 @@ async def _with_context(items: list[dict]) -> list[dict]:
 
     company_ids = sorted({p["company_id"] for p in people.values() if p.get("company_id")})
     signals: dict[str, dict[str, str]] = {}
+    # The same values by signal code, for the Outbox filters: a label can be
+    # renamed in the catalog, a code can't.
+    by_code: dict[str, dict[str, list[str]]] = {}
     if company_ids:
         rows = await query_db(
             "SELECT o.company_id, o.signal_code, o.value_num, o.value_text, "
@@ -1254,7 +1258,7 @@ async def _with_context(items: list[dict]) -> list[dict]:
                 value = ""
             else:
                 value = "yes" if r["value_num"] else "no"
-            key = (r["company_id"], r["label"])
+            key = (r["company_id"], r["signal_code"], r["label"])
             seen = (r["run_id"] or r["observed_at"])
             prev_seen, values = latest.get(key, (None, []))
             if seen != prev_seen:
@@ -1262,8 +1266,10 @@ async def _with_context(items: list[dict]) -> list[dict]:
             if value not in values:
                 values = values + [value]
             latest[key] = (seen, values)
-        for (company_id, label), (_, values) in latest.items():
-            signals.setdefault(company_id, {})[label] = ", ".join(v for v in values if v)
+        for (company_id, code, label), (_, values) in latest.items():
+            kept = [v for v in values if v]
+            signals.setdefault(company_id, {})[label] = ", ".join(kept)
+            by_code.setdefault(company_id, {})[code] = kept
 
     for item in items:
         p = people.get(item.get("prospect_id")) or {}
@@ -1280,6 +1286,7 @@ async def _with_context(items: list[dict]) -> list[dict]:
             "score": p.get("score"),
             "notes": p.get("personalization_notes", ""),
             "signals": signals.get(p.get("company_id"), {}),
+            "signal_values": by_code.get(p.get("company_id"), {}),
         }
     return items
 

@@ -2,7 +2,7 @@ let currentTab = 'today';
 let companyDrill = false;      // true while viewing a single company's contacts
 let _companies = [], _prospects = [], _campaigns = [];
 let _signals = null;           // last /api/signals payload, for the cohort builder
-let _desk = { items: [], i: 0 };
+let _desk = { items: [], all: [], i: 0 };
 
 // ── Appearance ──
 //
@@ -1644,23 +1644,25 @@ async function loadOutbox() {
   }
 
   const pending = data.pending || [];
-  _desk.items = pending;
+  _desk.all = pending;
+  _desk.items = outboxView(pending, _obx);
   _desk.footer = data.footer || '';
   // Keep the desk on the draft being edited even if the list shifted.
-  const editingAt = _desk.editing ? pending.findIndex(p => p.id === _desk.editing) : -1;
+  const editingAt = _desk.editing ? _desk.items.findIndex(p => p.id === _desk.editing) : -1;
   if (editingAt >= 0) _desk.i = editingAt;
   else if (_desk.editing) {
     _desk.editing = null;
     _desk.unsaved = null;
   }
-  if (_desk.i >= pending.length) _desk.i = Math.max(0, pending.length - 1);
+  if (_desk.i >= _desk.items.length) _desk.i = Math.max(0, _desk.items.length - 1);
   navCount('nav-outbox', pending.length);
 
   actions.innerHTML =
     (pending.length && !data.paused
       ? (pending.length > pending.filter(p => heldReason(p)).length
         ? '<button class="btn btn-primary btn-sm" onclick="outboxApproveAll()" ' +
-          'title="Emails Sellbird held are left for you to approve one by one">Approve all ' +
+          'title="Approves every draft waiting, including any your filters hide. ' +
+          'Emails Sellbird held are left for you to approve one by one">Approve all ' +
           (pending.length - pending.filter(p => heldReason(p)).length) + '</button>' : '') : '') +
     (data.paused
       ? '<button class="btn btn-secondary btn-sm" onclick="sendingToggle(\'resume\')">' +
@@ -1682,7 +1684,9 @@ async function loadOutbox() {
         '<p>' + escHtml(data.compliance_notice) + '</p></div></div>';
   }
 
-  desk.innerHTML = pending.length ? renderDesk(pending, _desk.i) :
+  document.getElementById('outbox-filters').innerHTML = renderOutboxFilters(pending, _obx);
+  desk.innerHTML = _desk.items.length ? renderDesk(_desk.items, _desk.i) :
+    pending.length ? outboxNoMatch() :
     '<div class="card">' + emptyState(icon('check'), 'Nothing to review',
       _sendingMode && _sendingMode.mode === 'autopilot'
         ? 'Autopilot is on, so Sellbird sends on its own. Anything it holds for you shows up here.'
@@ -1867,6 +1871,173 @@ function heldReason(item) {
   return why.charAt(0).toUpperCase() + why.slice(1);
 }
 
+// ── Outbox filters: which email of the series, and what the company runs ──
+//
+// A long queue mixes first emails, follow-ups and replies to different kinds
+// of business. These narrow the desk to one slice so like drafts are judged
+// side by side. They only change what's shown: Approve all still covers
+// every draft waiting. Platform and ads come from the TECH_STACK,
+// RUNNING_GOOGLE_ADS and RUNNING_META_ADS signals, so they appear once those
+// signals have been collected.
+
+let _obx = {step: 'all', tool: '', ads: '', sort: 'send'};
+
+const OUTBOX_ADS = [
+  ['', 'Any ads status'],
+  ['any', 'Running ads'],
+  ['google', 'Running Google Ads'],
+  ['meta', 'Running Meta ads'],
+  ['none', 'No ads found'],
+];
+
+const OUTBOX_SORTS = [
+  ['send', 'Soonest to send'],
+  ['step', 'By email in series'],
+];
+
+// 'reply', or the step number as text ('1', '2', ...).
+function outboxSeries(item) {
+  return item.kind === 'reply' ? 'reply' : String(item.step || 1);
+}
+
+function outboxStepName(key) {
+  return key === 'reply' ? 'Reply' : 'Email ' + key;
+}
+
+function outboxTools(item) {
+  const v = (((item.context || {}).signal_values || {}).TECH_STACK) || [];
+  return [...new Set(v.flatMap(x => String(x).split(',')).map(x => x.trim()).filter(Boolean))];
+}
+
+// true / false once checked, null when the signal was never collected.
+function outboxAds(item) {
+  const sv = (item.context || {}).signal_values || {};
+  const seen = code => Array.isArray(sv[code]) && sv[code].length ? sv[code].includes('yes') : null;
+  return {google: seen('RUNNING_GOOGLE_ADS'), meta: seen('RUNNING_META_ADS')};
+}
+
+function outboxAdsMatch(item, want) {
+  if (!want) return true;
+  const a = outboxAds(item);
+  if (want === 'google') return a.google === true;
+  if (want === 'meta') return a.meta === true;
+  if (want === 'any') return a.google === true || a.meta === true;
+  // "No ads found": checked, and no ad tag on the site.
+  return (a.google === false || a.meta === false) && a.google !== true && a.meta !== true;
+}
+
+// `skip` leaves one filter out, so each option can count what choosing it would show.
+function outboxMatches(item, f, skip) {
+  return (skip === 'step' || f.step === 'all' || outboxSeries(item) === f.step) &&
+    (skip === 'tool' || !f.tool || outboxTools(item).includes(f.tool)) &&
+    (skip === 'ads' || outboxAdsMatch(item, f.ads));
+}
+
+function outboxSeriesOrder(key) {
+  return key === 'reply' ? Infinity : Number(key) || 0;
+}
+
+function outboxView(items, f) {
+  const shown = items.filter(it => outboxMatches(it, f));
+  if (f.sort !== 'step') return shown;  // the server's order: soonest to send
+  return shown
+    .map((it, n) => [it, n])
+    .sort((a, b) => outboxSeriesOrder(outboxSeries(a[0])) - outboxSeriesOrder(outboxSeries(b[0])) || a[1] - b[1])
+    .map(x => x[0]);
+}
+
+function outboxFiltered(f) {
+  return f.step !== 'all' || !!f.tool || !!f.ads;
+}
+
+function renderOutboxFilters(items, f) {
+  if (items.length < 2 && !outboxFiltered(f)) return '';
+  const count = (key, value) => items.filter(it => outboxMatches(it, {...f, [key]: value}, null)).length;
+
+  const steps = [...new Set(items.map(outboxSeries))];
+  if (f.step !== 'all' && !steps.includes(f.step)) steps.push(f.step);
+  steps.sort((a, b) => outboxSeriesOrder(a) - outboxSeriesOrder(b));
+  const series = steps.length < 2 && f.step === 'all' ? '' :
+    '<div class="segmented" role="group" aria-label="Filter by email in the series">' +
+    [['all', 'All']].concat(steps.map(k => [k, k === 'reply' ? 'Replies' : 'Email ' + k])).map(([k, label]) =>
+      '<button class="' + (k === f.step ? 'on' : '') + '" aria-pressed="' + (k === f.step) + '" ' +
+        'onclick="setOutboxFilter(\'step\', ' + jsq(k) + ')">' + escHtml(label) +
+        ' <span class="n">' + count('step', k) + '</span></button>').join('') +
+    '</div>';
+
+  const select = (key, label, options) =>
+    '<select class="form-input" aria-label="' + label + '" title="' + label + '" ' +
+      'onchange="setOutboxFilter(\'' + key + '\', this.value)">' +
+    options.map(([v, text, n]) =>
+      '<option value="' + escHtml(v) + '"' + (v === f[key] ? ' selected' : '') + '>' +
+        escHtml(text) + (n === undefined ? '' : ' (' + n + ')') + '</option>').join('') +
+    '</select>';
+
+  const tools = [...new Set(items.flatMap(outboxTools))];
+  if (f.tool && !tools.includes(f.tool)) tools.push(f.tool);
+  tools.sort((a, b) => a.localeCompare(b));
+  const toolSelect = tools.length
+    ? select('tool', 'Filter by website platform or tool',
+        [['', 'Any platform or tool']].concat(tools.map(t => [t, t, count('tool', t)])))
+    : '';
+
+  const adsKnown = items.some(it => {
+    const a = outboxAds(it);
+    return a.google !== null || a.meta !== null;
+  });
+  const adsSelect = adsKnown || f.ads
+    ? select('ads', 'Filter by whether they run ads',
+        OUTBOX_ADS.map(([v, text]) => [v, text, v ? count('ads', v) : undefined]))
+    : '';
+
+  const sortSelect = select('sort', 'Order of the drafts', OUTBOX_SORTS);
+
+  const hint = !toolSelect && !adsSelect
+    ? '<span class="toolbar-hint">Platform and ads filters appear once Sellbird collects ' +
+      '<button class="btn-link" onclick="goTab(\'signals\')">those signals</button>.</span>'
+    : '';
+
+  const shown = items.filter(it => outboxMatches(it, f)).length;
+  const status = outboxFiltered(f)
+    ? '<span class="toolbar-count" role="status">' + shown + ' of ' + items.length + ' shown</span>' +
+      '<button class="btn btn-ghost btn-sm" onclick="clearOutboxFilters()">Clear filters</button>'
+    : '';
+
+  return '<div class="toolbar outbox-toolbar">' + series + toolSelect + adsSelect + sortSelect + hint +
+    '<span class="toolbar-end">' + status + '</span></div>';
+}
+
+function outboxNoMatch() {
+  return '<div class="card">' + emptyState(icon('discover'), 'No drafts match these filters',
+    'Every draft is still waiting. Change a filter or ' +
+    '<button class="btn-link" onclick="clearOutboxFilters()">clear them</button> to see all of them.') +
+    '</div>';
+}
+
+// Re-render from what's loaded: filtering is instant and never refetches.
+function renderOutbox() {
+  const keep = (_desk.items[_desk.i] || {}).id;
+  _desk.items = outboxView(_desk.all, _obx);
+  const at = _desk.items.findIndex(it => it.id === keep);
+  _desk.i = at >= 0 ? at : 0;
+  document.getElementById('outbox-filters').innerHTML = renderOutboxFilters(_desk.all, _obx);
+  document.getElementById('outbox-desk').innerHTML = _desk.items.length
+    ? renderDesk(_desk.items, _desk.i) : outboxNoMatch();
+}
+
+function setOutboxFilter(key, value) {
+  // The draft being edited must stay on screen until it is saved or cancelled.
+  if (deskBusy()) { renderOutbox(); return; }
+  _obx = {..._obx, [key]: value};
+  renderOutbox();
+}
+
+function clearOutboxFilters() {
+  if (deskBusy()) return;
+  _obx = {..._obx, step: 'all', tool: '', ads: ''};
+  renderOutbox();
+}
+
 function renderDesk(items, i) {
   const cur = items[i];
   const rail = items.map((it, n) => {
@@ -1877,7 +2048,8 @@ function renderDesk(items, i) {
       '<div class="di-text"><div class="to">' + escHtml(who) +
         (heldReason(it) ? ' <span class="tag t-bad" title="Sellbird held this instead of sending it">Held</span>' : '') +
         '</div>' +
-      '<div class="sub">' + escHtml(it.subject || '(no subject)') + '</div></div>' +
+      '<div class="sub"><span class="di-step">' + escHtml(outboxStepName(outboxSeries(it))) + '</span>' +
+        escHtml(it.subject || '(no subject)') + '</div></div>' +
     '</div>';
   }).join('');
 
