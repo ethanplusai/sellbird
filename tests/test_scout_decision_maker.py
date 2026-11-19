@@ -472,3 +472,24 @@ async def test_several_personal_free_mail_addresses_are_not_used(no_network):
              '<a href="mailto:pedro.ejemplo@hotmail.com">Pedro</a>'}
     scout = site_scout(pages)
     assert await scout._find_inbox_address("salonejemplo.test") == ""
+
+
+@pytest.mark.asyncio
+async def test_spanish_site_uses_the_paternal_surname(no_network):
+    pages = {"https://panaderiaejemplo.test":
+             '<html lang="es"><h3>María José García López</h3><p>Dueña</p>'
+             '<h3>José Ramírez Soto</h3><p>Gerente de Ventas</p></html>'}
+    scout = site_scout(pages)
+    found = {m["full_name"]: m for m in await scout._scrape_team_page("panaderiaejemplo.test")}
+    assert found["María José García López"]["last_name"] == "García"
+    assert found["María José García López"]["alt_last_names"] == ["López"]
+    assert found["José Ramírez Soto"]["last_name"] == "Ramírez"
+
+
+@pytest.mark.asyncio
+async def test_english_site_keeps_the_last_word_as_surname(no_network):
+    pages = {"https://pryordental.test":
+             '<html lang="en"><h3>Maren Hollis Pryor</h3><p>Owner</p></html>'}
+    scout = site_scout(pages)
+    member, = await scout._scrape_team_page("pryordental.test")
+    assert member["last_name"] == "Pryor" and "alt_last_names" not in member

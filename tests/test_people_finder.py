@@ -416,3 +416,138 @@ def test_nested_testimonials_are_bounded():
 def test_whole_page_is_scanned_not_just_the_top():
     html = "<p>x</p>" * 30000 + '<a href="mailto:info@summitcrestroofingandsiding.test">Email</a>'
     assert people.emails_on_page(html) == ["info@summitcrestroofingandsiding.test"]
+
+
+# ── Spanish-language sites ──
+# Fictional businesses on .test domains; invented people.
+
+ES = "panaderiasol.test"
+
+
+def es_people(html):
+    return [(p["full_name"], p["title"], p["owner"])
+            for p in people.find_people([(f"https://{ES}", html)], ES)]
+
+
+@pytest.mark.parametrize("text, split", [
+    ("José Martínez", ("José", "Martínez")),
+    ("Dra. Ángela Núñez", ("Ángela", "Núñez")),
+    ("María José de la Cruz", ("María", "de la Cruz")),
+])
+def test_accented_spanish_names_are_people(text, split):
+    assert people.split_person_name(text) == split
+
+
+@pytest.mark.parametrize("text", ["Nuestro Equipo", "Conoce Al Equipo", "Sobre Nosotros"])
+def test_spanish_headings_are_not_a_person(text):
+    assert not people.is_person_name(text)
+
+
+@pytest.mark.parametrize("title", [
+    "Dueño", "Dueña y Gerente General", "Propietaria", "Fundadora", "Cofundador",
+    "Presidente", "Directora General", "Socio Fundador",
+])
+def test_spanish_owner_titles(title):
+    assert people.is_owner_title(title)
+
+
+@pytest.mark.parametrize("title", [
+    "Vicepresidente", "Asistente de Gerencia", "Gerente General", "Antiguo dueño",
+    "Fundador (fallecido)", "Abogado Asociado", "Subdirectora",
+])
+def test_spanish_titles_that_are_not_the_owner(title):
+    assert not people.is_owner_title(title)
+
+
+def test_spanish_owner_satisfies_an_english_owner_icp_and_back():
+    assert people.title_matches("Dueña", ["Owner"])
+    assert people.title_matches("Owner", ["Dueño"])
+    assert not people.title_matches("Vicepresidenta", ["Presidente"])
+
+
+def test_a_role_after_a_spanish_owner_title_is_not_another_company():
+    assert not people.title_names_other_org("Dueña y Gerente General", ES)
+    assert not people.title_names_other_org("Fundadora de Panadería Sol", ES)
+    assert people.title_names_other_org("Fundador de Mercado Rival", ES)
+
+
+def test_spanish_owner_on_a_card_beats_staff():
+    html = ('<div><h3>Rosa Elena Quintero</h3><p>Dueña y Gerente General</p></div>'
+            '<div><h3>Iván Prado</h3><p>Gerente de Ventas</p></div>')
+    found = es_people(html)
+    assert found[0] == ("Rosa Elena Quintero", "Dueña y Gerente General", True)
+
+
+@pytest.mark.parametrize("html, expected", [
+    ('<p>Julián Prado, propietario de Panadería Sol, hornea cada mañana.</p>',
+     ("Julián Prado", "Propietario")),
+    ('<p>Hoy la dirige su dueña Rosa Quintero.</p>', ("Rosa Quintero", "Dueña")),
+    ('<p>Inés Varela fundó Panadería Sol en 2005.</p>', ("Inés Varela", "Fundador")),
+    ('<p>Bienvenidos al consultorio de la Dra. Inés Varela.</p>', ("Inés Varela", "Dueña")),
+    ('<p>Panadería Sol es propiedad de Tomás Quintero.</p>', ("Tomás Quintero", "Dueño")),
+])
+def test_spanish_owner_named_in_a_sentence(html, expected):
+    assert es_people(html)[0][:2] == expected
+
+
+def test_owner_of_another_business_quoted_in_spanish_is_ignored():
+    assert es_people('<p>Julián Prado, propietario de Mercado Rival, nos recomienda.</p>') == []
+
+
+def test_a_founder_who_passed_away_is_dropped():
+    html = ('<p>Fundada por Tomás Quintero, quien falleció en 2015.</p>'
+            '<h3>Rosa Quintero</h3><p>Propietaria</p>')
+    assert [n for n, *_ in es_people(html)] == ["Rosa Quintero"]
+
+
+def test_spanish_menu_links_lead_to_team_and_about_pages():
+    nav = ('<a href="/nosotros">Nosotros</a><a href="/nuestro-equipo">Nuestro equipo</a>'
+           '<a href="/servicios">Servicios</a><a href="/contacto">Contacto</a>'
+           '<a href="/abogados-de-lesiones-personales">Lesiones personales</a>')
+    assert people.menu_links(nav, f"https://{ES}") == [
+        f"https://{ES}/nuestro-equipo", f"https://{ES}/nosotros", f"https://{ES}/contacto"]
+
+
+@pytest.mark.parametrize("title", [
+    "Owner and General Manager", "Owner & Operations Manager", "Owner, Lead Technician",
+])
+def test_a_role_after_an_owner_title_is_not_another_company(title):
+    assert not people.title_names_other_org(title, "whitlockroofing.test")
+
+
+@pytest.mark.parametrize("title", ["Founder at Acme Marketing", "Owner, Davis Bakery"])
+def test_a_company_after_an_owner_title_still_is(title):
+    assert people.title_names_other_org(title, "whitlockroofing.test")
+
+
+def test_owner_and_general_manager_on_a_card_is_found():
+    html = ('<h3>Dale Whitlock</h3><p>Owner and General Manager</p>'
+            '<h3>Amy Cole</h3><p>Office Manager</p>')
+    found = people.find_people([("https://whitlockroofing.test", html)], "whitlockroofing.test")
+    assert found[0]["full_name"] == "Dale Whitlock" and found[0]["owner"]
+
+
+@pytest.mark.parametrize("name, surnames", [
+    ("María José García López", ["García", "López"]),
+    ("José García López", ["García", "López"]),
+    ("Dra. Inés Varela Ruiz", ["Varela", "Ruiz"]),
+    ("María José García", ["García"]),
+    ("Juan Martín López", ["López", "Martín"]),
+    ("Ana de la Cruz Pérez", ["de la Cruz", "Pérez"]),
+    ("María del Carmen Ruiz Soto", ["Ruiz", "Soto"]),
+    ("María del Carmen Ruiz", []),
+    ("Rosa Quintero", []),
+    ("Nuestro Equipo de Ventas", []),
+])
+def test_hispanic_surnames_paternal_first(name, surnames):
+    assert people.hispanic_surnames(name) == surnames
+
+
+def test_particles_inside_a_name():
+    assert people.split_person_name("Ana de la Cruz Pérez") == ("Ana", "Pérez")
+    assert people.split_person_name("Ana de") is None
+
+
+def test_accented_business_name_matches_its_ascii_domain():
+    assert people.names_business("Panadería Núñez", "panaderianunez.test")
+    assert people.surname_on_the_door("Núñez", "panaderianunez.test")

@@ -205,7 +205,7 @@ def _is_name_token(token: str) -> bool:
 # Block-level tags separate a name, its title, and the bio that follows; the
 # first text chunk after the name heading is the title, nothing further.
 _BLOCK_BREAK = re.compile(r"(?i)<(?:/?(?:p|div|li|ul|ol|section|article|td|tr)\b[^>]*|br\s*/?)>")
-_CONNECTORS = frozenset("of and the for & to in at de du des la le et en au aux a".split())
+_CONNECTORS = frozenset("of and the for & to in at de du des la le et en au aux a y e del el".split())
 
 
 def _title_chunks(raw_after: str) -> list[str]:
@@ -244,6 +244,9 @@ DECISION_MAKER_TITLES = (
     # fondateur/fondatrice, directeur/directrice, gérant(e), associé(e).
     "proprietaire", "president", "pdg", "fondat", "directeur", "directrice",
     "gerant", "associe",
+    # Spanish, accents folded ("director" above covers "directora"; not
+    # "socio", which is inside "asociado")
+    "dueno", "duena", "propietari", "fundador", "gerente",
 )
 
 
@@ -261,7 +264,12 @@ ROLE_HINT = re.compile(
     r"estimat(?:eur|rice)|representante?|conseill(?:er|ere)|coordonnat(?:eur|rice)|contremaitre|"
     r"superviseure?|responsable|chargee?|ventes|comptable|administrat(?:eur|rice)|ingenieure?|"
     r"frigoriste|mecanicien(?:ne)?|installat(?:eur|rice)|repartit(?:eur|rice)|secretaire|"
-    r"receptionniste)\b", re.I)
+    r"receptionniste|"
+    # Spanish, accents folded: "Dueña y Gerente General", "Odontóloga", "Socio Fundador"
+    r"duen[oa]s?|co-?propietari[oa]s?|propietari[oa]s?|co-?fundador(?:a|es)?|fundador(?:a|es)?|"
+    r"president[ea]|vicepresident[ea]|gerente|directora?|soci[oa]|administrador[a]?|encargad[oa]|"
+    r"jef[ea]|coordinador[a]?|asesor[a]?|ejecutiv[oa]|odontolog[oa]|abogad[oa]|contador[a]?|"
+    r"tecnic[oa]|comercial)\b", re.I)
 
 
 def title_looks_like_role(text: str) -> bool:

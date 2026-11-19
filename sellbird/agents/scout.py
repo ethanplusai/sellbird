@@ -168,6 +168,10 @@ _SENIOR_KEYWORDS = (
     "pdg", "president", "presidente", "proprietaire", "coproprietaire", "fondateur",
     "fondatrice", "cofondateur", "cofondatrice", "associe", "associee", "vice-president",
     "vice-presidente", "directeur", "directrice",
+    # Spanish, accents folded
+    "dueno", "duena", "propietario", "propietaria", "fundador", "fundadora",
+    "cofundador", "cofundadora", "presidenta", "socio", "socia", "directora",
+    "gerente general",
 )
 
 
@@ -1247,7 +1251,8 @@ class Scout:
         return out[:3]
 
     async def _resolve_email(
-        self, first_name: str, last_name: str, domain: str
+        self, first_name: str, last_name: str, domain: str,
+        alt_last_names: list[str] | None = None,
     ) -> tuple[str, str]:
         """Find an email and return (address, honest_status).
 
@@ -1268,6 +1273,7 @@ class Scout:
                 known_emails=evidence.get("known") or None,
                 default_pattern=evidence.get("default", DEFAULT_PATTERN),
                 other_people=evidence.get("people") or None,
+                alt_last_names=alt_last_names or None,
             )
         except Exception as e:
             logger.debug(f"find_email failed for {domain}: {e}")
@@ -1579,6 +1585,14 @@ Respond ONLY with the JSON array."""
             found = []
         if not found:
             found = self._people_from_cards(site["pages"])
+        if _SPANISH_SITE.search(home or ""):
+            # Two surnames, and the address uses the paternal one:
+            # "María José García López" is García, with López to fall back on.
+            for p in found:
+                surnames = people_mod.hispanic_surnames(p.get("full_name", ""))
+                if surnames:
+                    p["last_name"] = surnames[0]
+                    p["alt_last_names"] = surnames[1:]
 
         addresses: list[str] = []
         for _, html in site["pages"]:
@@ -1713,7 +1727,7 @@ Respond ONLY with the JSON array."""
             considered += 1
 
             email, email_status = await self._resolve_email(
-                first_name, last_name, domain
+                first_name, last_name, domain, alt_last_names=member.get("alt_last_names"),
             )
 
             prospect = Prospect(
@@ -2138,7 +2152,7 @@ Respond ONLY with the JSON array."""
                        " incorporated", " limited", " company"]:
             if name.endswith(suffix):
                 name = name[: -len(suffix)]
-        name = re.sub(r"[^a-z0-9]", "", name)
+        name = re.sub(r"[^a-z0-9]", "", fold_accents(name))
         if not name:
             return ""
 
@@ -2234,22 +2248,25 @@ Respond ONLY with the JSON array."""
             return ""
         t = fold_accents(title).lower()
         # "Directeur général adjoint", "Adjointe à la présidence": below the top.
-        deputy = re.search(r"\b(?:adjointe?|assistante?|sous-\w+)\b", t)
-        vice = re.search(r"\bvice[- ]president", t)
+        deputy = re.search(r"\b(?:adjointe?|assistante?|sous-\w+|adjunt[oa]|asistente|"
+                           r"sub(?:director|gerente)a?)\b", t)
+        vice = re.search(r"\bvice[- ]?president", t)
         if any(kw in t for kw in ["ceo", "cto", "cfo", "cmo", "coo", "cro",
                                   "chief", "founder", "co-founder", "owner",
                                   "president", "pdg", "p.-d.g", "proprietaire",
-                                  "fondat"]) and not vice and not deputy:
+                                  "fondat", "dueno", "duena", "propietari",
+                                  "fundador"]) and not vice and not deputy:
             return "c_suite"
         # The directeur général runs a Québec small business.
-        if re.search(r"\bdirect(?:eur|rice) generale?\b", t) and not deputy:
+        if re.search(r"\bdirect(?:eur|rice) generale?\b|\bdirectora? general\b", t) and not deputy:
             return "c_suite"
         if vice or any(kw in t for kw in ["vp", "svp", "evp", "head of"]):
             return "vp"
         if any(kw in t for kw in ["director", "directeur", "directrice"]):
             return "director"
         if any(kw in t for kw in ["manager", "team lead", "lead ", "gerant", "gestionnaire",
-                                  "superviseur", "contremaitre", "chef d'equipe"]):
+                                  "superviseur", "contremaitre", "chef d'equipe", "gerente",
+                                  "jefe", "jefa", "encargad"]):
             return "manager"
         return "individual"
 
