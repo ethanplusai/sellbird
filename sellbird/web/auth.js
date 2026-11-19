@@ -63,7 +63,9 @@ function authFetch(path, opts) {
   if (token) headers.set('Authorization', 'Bearer ' + token);
   o.headers = headers;
   o.mode = 'same-origin';
-  o.credentials = 'omit';
+  // Local modification (self-hosted fork): 'same-origin', not 'omit', so an
+  // auth proxy's cookie (Cloudflare Access) reaches it. The server never reads cookies.
+  o.credentials = 'same-origin';
   o.cache = 'no-store';
   o.redirect = 'error';
   // Not 'no-referrer': per the Fetch spec that makes a POST's Origin "null"

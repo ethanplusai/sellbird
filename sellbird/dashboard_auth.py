@@ -381,7 +381,14 @@ class DashboardGuard:
                       and headers.get("sec-fetch-mode", [""])[0] == "navigate"
                       and headers.get("sec-fetch-dest", [""])[0] == "document")
         origins = headers.get("origin", [])
-        if origins and (len(origins) != 1 or origins[0].lower() != f"http://{host_header}"):
+        allowed = {f"http://{host_header}"}
+        # Local modification (self-hosted fork): a reverse tunnel such as
+        # Cloudflare Tunnel rewrites Host to localhost but the browser still
+        # sends the public Origin. Opt-in; unset = upstream behaviour.
+        public_origin = os.environ.get("SELLBIRD_PUBLIC_ORIGIN", "").strip().lower().rstrip("/")
+        if public_origin.startswith("https://") and "/" not in public_origin[8:]:
+            allowed.add(public_origin)
+        if origins and (len(origins) != 1 or origins[0].lower() not in allowed):
             if not navigation:
                 return await deny(403, "cross_origin", "Cross-origin requests are refused.")
         site = headers.get("sec-fetch-site", [])
