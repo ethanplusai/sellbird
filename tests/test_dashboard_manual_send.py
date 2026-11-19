@@ -41,6 +41,15 @@ def client(env):
         yield c
 
 
+@pytest.fixture
+def sending_db(tmp_path, monkeypatch):
+    """Provider checks need known delivery state, independently of the UI fixture."""
+    db = tmp_path / "sellbird.db"
+    monkeypatch.setattr(dash, "DB_PATH", db)
+    asyncio.run(StateManager(db_path=str(db)).init_db())
+    return db
+
+
 def _sql(env, query, params=()):
     with sqlite3.connect(env["db"]) as db:
         db.execute(query, params)
@@ -60,6 +69,23 @@ def _campaign(env, cid, prospect_ids):
 
 
 # ── Campaign recipients ──
+
+
+def test_campaigns_without_a_database_file(client, env):
+    env["db"].unlink()
+    response = client.get("/api/campaigns")
+    assert response.status_code == 200
+    assert response.json() == []
+    assert not env["db"].exists()
+
+
+def test_campaigns_with_unknown_delivery_state_fail_closed(client, env):
+    _prospect(env, "p1", "person@example.com")
+    _campaign(env, "c1", ["p1"])
+    _sql(env, "DROP TABLE outbox")
+    # Existing drafts must not gain manual-send controls when delivery reads fail.
+    with pytest.raises(sqlite3.OperationalError, match="no such table: outbox"):
+        client.get("/api/campaigns")
 
 
 def test_campaigns_list_their_recipients(client, env):
@@ -331,17 +357,28 @@ class _Provider:
     (_Cfg(provider="instantly"), _Env(), True, False),
     (_Cfg(provider="instantly", approval=True), _Env(instantly="k"), True, False),  # held
 ])
-def test_sellbird_can_send(monkeypatch, cfg, env, provider_ok, expected):
+def test_sellbird_can_send(monkeypatch, sending_db, cfg, env, provider_ok, expected):
     import sellbird.config
     import sellbird.integrations.mail_provider as mp
     monkeypatch.setattr(sellbird.config, "load_config", lambda: cfg)
     monkeypatch.setattr(sellbird.config, "load_env", lambda: env)
     monkeypatch.setattr(mp, "get_mail_provider", lambda c, e: _Provider(provider_ok))
-    # These tests don't use the env fixture, so this is the real check.
+    # Keep the real safety check; sending_db establishes known delivery state.
     assert dash._sellbird_can_send() is expected
 
 
-def test_an_unreadable_config_means_sellbird_might_send(monkeypatch):
+def test_missing_delivery_database_disables_hand_sends(monkeypatch, tmp_path):
+    import sellbird.config
+
+    db = tmp_path / "missing.db"
+    monkeypatch.setattr(dash, "DB_PATH", db)
+    monkeypatch.setattr(sellbird.config, "load_config", lambda: _Cfg(enabled=False))
+    monkeypatch.setattr(sellbird.config, "load_env", lambda: _Env())
+    assert dash._sellbird_can_send() is True
+    assert not db.exists()
+
+
+def test_an_unreadable_config_means_sellbird_might_send(monkeypatch, sending_db):
     import sellbird.config
 
     def boom():

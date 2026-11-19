@@ -991,33 +991,36 @@ def load_brain_config(config_path: str | None = None) -> BrainConfig:
 
 def load_env() -> EnvConfig:
     """Load environment variables from .env file."""
-    load_dotenv()
+    from sellbird.secrets import workspace_env
+    from sellbird.workspace_home import current_home
+    if not current_home().hosted:
+        load_dotenv()
     env = EnvConfig(
-        instantly_api_key=os.getenv("INSTANTLY_API_KEY", "").strip(),
-        dataforseo_login=os.getenv("DATAFORSEO_LOGIN", "").strip(),
-        dataforseo_password=os.getenv("DATAFORSEO_PASSWORD", "").strip(),
-        dataforseo_sandbox=os.getenv("DATAFORSEO_SANDBOX", "").strip(),
-        linkedin_email=os.getenv("LINKEDIN_EMAIL", "").strip(),
-        linkedin_password=os.getenv("LINKEDIN_PASSWORD", "").strip(),
-        hunter_api_key=os.getenv("HUNTER_API_KEY", "").strip(),
-        serper_api_key=os.getenv("SERPER_API_KEY", "").strip(),
-        scavio_api_key=os.getenv("SCAVIO_API_KEY", "").strip(),
-        tinyfish_api_key=os.getenv("TINYFISH_API_KEY", "").strip(),
-        reoon_api_key=os.getenv("REOON_API_KEY", "").strip(),
-        zerobounce_api_key=os.getenv("ZEROBOUNCE_API_KEY", "").strip(),
-        gmail_client_id=os.getenv("GMAIL_CLIENT_ID", "").strip(),
-        gmail_client_secret=os.getenv("GMAIL_CLIENT_SECRET", "").strip(),
-        smtp_host=os.getenv("SMTP_HOST", "").strip(),
-        smtp_port=int(os.getenv("SMTP_PORT", "587").strip() or 587),
-        smtp_username=os.getenv("SMTP_USERNAME", "").strip(),
-        smtp_password=os.getenv("SMTP_PASSWORD", "").strip(),
-        imap_host=os.getenv("IMAP_HOST", "").strip(),
-        imap_port=int(os.getenv("IMAP_PORT", "993").strip() or 993),
-        imap_username=os.getenv("IMAP_USERNAME", "").strip(),
-        imap_password=os.getenv("IMAP_PASSWORD", "").strip(),
-        m365_client_id=os.getenv("M365_CLIENT_ID", "").strip(),
-        m365_tenant_id=os.getenv("M365_TENANT_ID", "").strip(),
-        precleared_api_key=os.getenv("PRECLEARED_API_KEY", "").strip(),
+        instantly_api_key=workspace_env("INSTANTLY_API_KEY", "").strip(),
+        dataforseo_login=workspace_env("DATAFORSEO_LOGIN", "").strip(),
+        dataforseo_password=workspace_env("DATAFORSEO_PASSWORD", "").strip(),
+        dataforseo_sandbox=workspace_env("DATAFORSEO_SANDBOX", "").strip(),
+        linkedin_email=workspace_env("LINKEDIN_EMAIL", "").strip(),
+        linkedin_password=workspace_env("LINKEDIN_PASSWORD", "").strip(),
+        hunter_api_key=workspace_env("HUNTER_API_KEY", "").strip(),
+        serper_api_key=workspace_env("SERPER_API_KEY", "").strip(),
+        scavio_api_key=workspace_env("SCAVIO_API_KEY", "").strip(),
+        tinyfish_api_key=workspace_env("TINYFISH_API_KEY", "").strip(),
+        reoon_api_key=workspace_env("REOON_API_KEY", "").strip(),
+        zerobounce_api_key=workspace_env("ZEROBOUNCE_API_KEY", "").strip(),
+        gmail_client_id=workspace_env("GMAIL_CLIENT_ID", "").strip(),
+        gmail_client_secret=workspace_env("GMAIL_CLIENT_SECRET", "").strip(),
+        smtp_host=workspace_env("SMTP_HOST", "").strip(),
+        smtp_port=int(workspace_env("SMTP_PORT", "587").strip() or 587),
+        smtp_username=workspace_env("SMTP_USERNAME", "").strip(),
+        smtp_password=workspace_env("SMTP_PASSWORD", "").strip(),
+        imap_host=workspace_env("IMAP_HOST", "").strip(),
+        imap_port=int(workspace_env("IMAP_PORT", "993").strip() or 993),
+        imap_username=workspace_env("IMAP_USERNAME", "").strip(),
+        imap_password=workspace_env("IMAP_PASSWORD", "").strip(),
+        m365_client_id=workspace_env("M365_CLIENT_ID", "").strip(),
+        m365_tenant_id=workspace_env("M365_TENANT_ID", "").strip(),
+        precleared_api_key=workspace_env("PRECLEARED_API_KEY", "").strip(),
     )
     return env
 

@@ -188,6 +188,17 @@ async def decide_next_action(
     held = (legacy_sending_held(config) or native_paused
             or not getattr(email, "enabled", True))
     deployable = 0 if held else draft_campaigns
+    # A failed Instantly deployment must not monopolize every heartbeat.
+    # The sender persists a bounded retry timestamp in this workspace DB.
+    if deployable and state is not None and getattr(email, "provider", "") == "instantly":
+        raw_retry = await state.get_setting("instantly_deploy_retry_after")
+        if raw_retry:
+            try:
+                retry_at = datetime.fromisoformat(raw_retry)
+                if retry_at > datetime.utcnow():
+                    deployable = 0
+            except ValueError:
+                pass
 
     if deployable > 0:
         action, reason = "send_campaign", f"{draft_campaigns} draft campaign(s) ready to deploy"

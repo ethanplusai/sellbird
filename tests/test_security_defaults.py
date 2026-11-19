@@ -188,3 +188,48 @@ def test_status_still_works_when_the_config_is_invalid(tmp_path, monkeypatch, ca
     monkeypatch.setattr(sellbird.config, "load_config", invalid)
     cmd_status(SimpleNamespace(check=False))
     assert "Prospects:" in capsys.readouterr().out
+
+
+def test_oauth_token_json_is_private_before_publication(tmp_path, monkeypatch):
+    import json
+    import os
+    import stat
+    from sellbird.secrets import write_private_json
+
+    target = tmp_path / "data" / "gmail_token.json"
+    modes = []
+    original_replace = os.replace
+
+    def inspect_replace(src, dst):
+        assert dst == target
+        modes.append(stat.S_IMODE(os.stat(src).st_mode))
+        assert json.loads(open(src, encoding="utf-8").read()) == {"refresh_token": "private"}
+        original_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", inspect_replace)
+    old_umask = os.umask(0)
+    try:
+        write_private_json(target, {"refresh_token": "private"})
+    finally:
+        os.umask(old_umask)
+    assert target.is_file()
+    assert json.loads(target.read_text()) == {"refresh_token": "private"}
+    if os.name != "nt":
+        assert modes == [0o600]
+        assert stat.S_IMODE(target.stat().st_mode) == 0o600
+
+
+def test_oauth_token_json_refuses_symlink(tmp_path):
+    import pytest
+    from sellbird.secrets import write_private_json
+
+    victim = tmp_path / "victim.txt"
+    victim.write_text("do not overwrite")
+    link = tmp_path / "token.json"
+    try:
+        link.symlink_to(victim)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlink creation unavailable")
+    with pytest.raises(OSError, match="unsafe credential destination"):
+        write_private_json(link, {"refresh_token": "no"})
+    assert victim.read_text() == "do not overwrite"

@@ -16,6 +16,7 @@ from urllib.parse import quote_plus
 
 logger = logging.getLogger("sellbird.linkedin")
 
+from sellbird.secrets import write_private_json
 from sellbird.paths import PROJECT_ROOT
 
 DATA_DIR = PROJECT_ROOT / "data"
@@ -150,12 +151,7 @@ class LinkedInAutomation:
 
     def _save_cookies_sync(self, cookies: list):
         try:
-            COOKIES_PATH.parent.mkdir(parents=True, exist_ok=True)
-            COOKIES_PATH.write_text(json.dumps(cookies), encoding="utf-8")
-            try:
-                COOKIES_PATH.chmod(0o600)  # session cookies are credentials
-            except OSError:
-                pass
+            write_private_json(COOKIES_PATH, cookies)
         except OSError as e:
             logger.warning(f"Could not save LinkedIn cookies: {e}")
 

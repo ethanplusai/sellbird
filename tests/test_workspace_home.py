@@ -140,3 +140,114 @@ def test_brain_reads_prompts_and_skills_from_the_current_home(tmp_path):
     with use_home(Home.for_root(tmp_path)):
         assert brain.load_prompt("writer", name="Dana") == "hi Dana"
         assert brain.load_skill("tone") == "be brief"
+
+
+@pytest.mark.asyncio
+async def test_dashboard_query_db_uses_active_workspace_database(tmp_path):
+    """An authenticated hosted request must not query the default workspace."""
+    import sellbird.dashboard as dash
+    import aiosqlite
+
+    first, second = (Home.for_root(tmp_path / name, mode="hosted")
+                     for name in ("first", "second"))
+    for home, company_name in ((first, "FIRST"), (second, "SECOND")):
+        home.data_dir.mkdir(parents=True)
+        async with aiosqlite.connect(home.db_path) as db:
+            await db.execute("CREATE TABLE probe (name TEXT)")
+            await db.execute("INSERT INTO probe VALUES (?)", (company_name,))
+            await db.commit()
+
+    for home, expected in ((first, "FIRST"), (second, "SECOND")):
+        with use_home(home):
+            rows = await dash.query_db("SELECT name FROM probe")
+            assert rows == [{"name": expected}]
+
+
+def test_dashboard_state_uses_active_workspace_path(tmp_path):
+    import sellbird.dashboard as dash
+
+    for name in ("a", "b"):
+        home = Home.for_root(tmp_path / name, mode="hosted")
+        with use_home(home):
+            assert dash._state().db_path == str(home.db_path)
+
+
+def test_hosted_env_settings_are_refused(tmp_path):
+    from fastapi.testclient import TestClient
+    import sellbird.dashboard as dash
+    from starlette.middleware import Middleware
+
+    class Open:
+        def __init__(self, app):
+            self.app = app
+
+        async def __call__(self, scope, receive, send):
+            await self.app(scope, receive, send)
+
+    app = dash.build_app(guard=Middleware(Open))
+    app.state.home = Home.for_root(tmp_path, mode="hosted")
+    resp = TestClient(app).post("/api/settings/env", json={"SMTP_PASSWORD": "secret"})
+    assert resp.status_code == 409
+    assert not (tmp_path / ".env").exists()
+
+
+@pytest.mark.asyncio
+async def test_hosted_secret_resolution_is_tenant_scoped(monkeypatch, tmp_path):
+    """Provider config must not inherit a different tenant's process secrets."""
+    from sellbird.config import load_env
+    from sellbird.secrets import MemorySecretBackend, SERVICE
+
+    monkeypatch.setenv("INSTANTLY_API_KEY", "global-owner-secret")
+    monkeypatch.setenv("SMTP_PASSWORD", "global-smtp-secret")
+    homes = []
+    for name, token in (("alpha", "alpha-only"), ("beta", "beta-only")):
+        backend = MemorySecretBackend()
+        backend.set_password(SERVICE, "env:instantly_api_key", token)
+        homes.append((Home.for_root(tmp_path / name, mode="hosted",
+                                    secret_backend=backend), token))
+
+    async def worker(home, expected):
+        with use_home(home):
+            for _ in range(3):
+                config = load_env()
+                assert config.instantly_api_key == expected
+                assert config.smtp_password == ""
+                await asyncio.sleep(0)
+
+    await asyncio.gather(*(worker(home, expected) for home, expected in homes))
+
+
+def test_hosted_secret_resolution_without_backend_fails_closed(monkeypatch, tmp_path):
+    from sellbird.config import load_env
+    monkeypatch.setenv("GMAIL_CLIENT_SECRET", "global-secret")
+    with use_home(Home.for_root(tmp_path, mode="hosted")):
+        assert load_env().gmail_client_secret == ""
+
+
+def test_hosted_environment_write_helper_refuses_even_internal_call(tmp_path):
+    import sellbird.dashboard as dash
+
+    home = Home.for_root(tmp_path, mode="hosted")
+    with use_home(home), pytest.raises(NotOnHosted):
+        dash._write_env_file({"TRULYINBOX_API_KEY": "must-not-write"})
+    assert not home.env_file.exists()
+
+
+def test_inbox_store_uses_active_workspace(tmp_path):
+    from sellbird.inbox_routes import _store
+    for name in ("a", "b"):
+        home = Home.for_root(tmp_path / name, mode="hosted")
+        with use_home(home):
+            assert _store().db_path == str(home.db_path)
+
+
+@pytest.mark.asyncio
+async def test_hosted_settings_do_not_echo_global_process_credentials(tmp_path, monkeypatch):
+    import sellbird.dashboard as dash
+
+    monkeypatch.setenv("SMTP_USERNAME", "global@outside.example")
+    monkeypatch.setenv("GMAIL_CLIENT_ID", "global-google-client")
+    with use_home(Home.for_root(tmp_path, mode="hosted")):
+        settings = await dash.get_settings()
+        assert settings["smtp_username"] == ""
+        assert settings["gmail_client_id"] == ""

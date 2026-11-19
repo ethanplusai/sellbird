@@ -34,7 +34,8 @@ from sellbird.paths import PACKAGE_ROOT, PROJECT_ROOT, is_checkout  # noqa: E402
 from sellbird import storage  # noqa: E402
 from sellbird.pidfile import LOCK_FILE, loop_lock_held, pid_alive  # noqa: E402
 from sellbird.textio import read_user_text  # noqa: E402
-from sellbird.workspace_home import NotOnHosted, use_home  # noqa: E402
+from sellbird.workspace_home import NotOnHosted, current_home, require_self_hosted, use_home  # noqa: E402
+from sellbird.secrets import workspace_env  # noqa: E402
 DB_PATH = PROJECT_ROOT / "data" / "sellbird.db"
 ENV_FILE = PROJECT_ROOT / ".env"
 CONFIG_FILE = PROJECT_ROOT / "sellbird.yaml"
@@ -53,7 +54,7 @@ def _resolve_config_file() -> Path:
     try:
         return Path(_find_config_file())
     except ConfigFileNotFoundError:
-        return CONFIG_FILE
+        return current_home().config_file or CONFIG_FILE
 
 # No /docs, /redoc or /openapi.json: the API is for this UI only, and every
 # route except the static shell needs the token (see dashboard_auth).
@@ -104,22 +105,27 @@ _env_lock = asyncio.Lock()
 # ── Helpers ──
 
 
-async def query_db(sql: str, params: tuple = ()) -> list[dict]:
+async def query_db(sql: str, params: tuple = (), *, strict: bool = False) -> list[dict]:
     """Run a query and return results as list of dicts.
 
     Never raises: a missing DB file, missing table, or malformed schema
     returns [] so no dashboard route can 500 on an empty install.
     """
-    if not DB_PATH.exists():
-        return []
+    db_path = current_home().db_path
     try:
-        async with storage.connect(str(DB_PATH)) as db:
+        if not storage.exists(db_path):
+            if strict:
+                raise RuntimeError("workspace database unavailable")
+            return []
+        async with storage.connect(str(db_path)) as db:
             db.row_factory = aiosqlite.Row
             async with db.execute(sql, params) as cursor:
                 rows = await cursor.fetchall()
                 return [dict(r) for r in rows]
     except Exception as e:
         logger.warning("query_db failed (%s): %s", sql.split(None, 4)[:4], e)
+        if strict:
+            raise
         return []
 
 
@@ -133,8 +139,11 @@ def _mask_key(key: str) -> str:
 def _read_env_file() -> dict[str, str]:
     """Read .env file and return as dict."""
     env_vars = {}
-    if ENV_FILE.exists():
-        for line in read_user_text(ENV_FILE).splitlines():
+    if current_home().hosted:
+        return env_vars  # hosted secrets live in the per-workspace secret backend
+    env_file = current_home().env_file
+    if env_file.exists():
+        for line in read_user_text(env_file).splitlines():
             line = line.strip()
             if line and not line.startswith("#") and "=" in line:
                 key, _, value = line.partition("=")
@@ -162,12 +171,14 @@ def _write_env_file(updates: dict[str, str]):
     result is owner-only (0600 on POSIX) whether .env existed or not. A
     symlinked .env is refused rather than replaced or followed.
     """
-    if ENV_FILE.is_symlink():
-        raise OSError(f"{ENV_FILE} is a symbolic link; edit it by hand.")
-    if ENV_FILE.exists() and not ENV_FILE.is_file():
-        raise OSError(f"{ENV_FILE} is not a regular file.")
-    lines = (read_user_text(ENV_FILE).splitlines()
-             if ENV_FILE.exists() else [])
+    require_self_hosted("env_settings")
+    env_file = current_home().env_file
+    if env_file.is_symlink():
+        raise OSError(f"{env_file} is a symbolic link; edit it by hand.")
+    if env_file.exists() and not env_file.is_file():
+        raise OSError(f"{env_file} is not a regular file.")
+    lines = (read_user_text(env_file).splitlines()
+             if env_file.exists() else [])
 
     out, written = [], set()
     for line in lines:
@@ -181,7 +192,7 @@ def _write_env_file(updates: dict[str, str]):
             out.append(line)
     out += [f"{k}={v}" for k, v in updates.items() if k not in written]
 
-    fd, tmp = tempfile.mkstemp(prefix=".env.", suffix=".tmp", dir=str(ENV_FILE.parent))
+    fd, tmp = tempfile.mkstemp(prefix=".env.", suffix=".tmp", dir=str(env_file.parent))
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
             if os.name != "nt":
@@ -189,14 +200,15 @@ def _write_env_file(updates: dict[str, str]):
             f.write("\n".join(out) + "\n")
             f.flush()
             os.fsync(f.fileno())
-        os.replace(tmp, ENV_FILE)
+        os.replace(tmp, env_file)
     except BaseException:
         try:
             os.unlink(tmp)
         except FileNotFoundError:
             pass
         raise
-    load_dotenv(str(ENV_FILE), override=True)
+    if not current_home().hosted:
+        load_dotenv(str(env_file), override=True)
 
 
 def _check_sellbird_pid() -> int | None:
@@ -240,7 +252,8 @@ async def get_setup_status():
 
     # 2. Env file
     env_vars = _read_env_file()
-    env_exists = ENV_FILE.exists() and bool(env_vars)
+    env_exists = (bool(env_vars) if current_home().hosted
+                  else current_home().env_file.exists() and bool(env_vars))
     checks.append({
         "id": "env_file", "label": "Environment file (.env)",
         "done": env_exists,
@@ -252,23 +265,23 @@ async def get_setup_status():
     provider = _current_provider()
 
     def _has(*keys):
-        return all((env_vars.get(k, "") or os.getenv(k, "")).strip() for k in keys)
+        return all((env_vars.get(k, "") or workspace_env(k, "")).strip() for k in keys)
 
     if provider == "gmail":
         provider_done = _has("GMAIL_CLIENT_ID", "GMAIL_CLIENT_SECRET") and \
-            (PROJECT_ROOT / "data" / "gmail_token.json").is_file()
+            current_home().gmail_token_file.is_file()
         provider_help = ("Add your Google OAuth client ID and secret in Settings, then sign "
                          "in on the Inboxes tab (or run 'sellbird gmail auth').")
     elif provider == "microsoft":
         provider_done = _has("M365_CLIENT_ID") and \
-            (PROJECT_ROOT / "data" / "m365_token.json").is_file()
+            current_home().m365_token_file.is_file()
         provider_help = ("Add your Microsoft 365 client and tenant IDs in Settings, then sign "
                          "in on the Inboxes tab (or run 'sellbird microsoft auth').")
     elif provider == "smtp":
         provider_done = _has("SMTP_HOST", "SMTP_USERNAME", "SMTP_PASSWORD")
         provider_help = "Enter your SMTP host, username, and password in Settings."
     else:
-        instantly_key = env_vars.get("INSTANTLY_API_KEY", "") or os.getenv("INSTANTLY_API_KEY", "")
+        instantly_key = env_vars.get("INSTANTLY_API_KEY", "") or workspace_env("INSTANTLY_API_KEY", "")
         provider_done = bool(instantly_key) and instantly_key != "your_instantly_api_key_here"
         provider_help = "Enter your Instantly API key in Settings."
     checks.append({
@@ -307,7 +320,7 @@ async def get_setup_status():
     })
 
     # 6. Product trained
-    product_trained = (PROJECT_ROOT / "skills" / "product_knowledge.md").exists()
+    product_trained = (current_home().skills_dir / "product_knowledge.md").exists()
     checks.append({
         "id": "product_trained", "label": "Product knowledge trained",
         "done": product_trained,
@@ -316,8 +329,8 @@ async def get_setup_status():
     })
 
     # 7. LinkedIn (optional)
-    linkedin_email = env_vars.get("LINKEDIN_EMAIL", "") or os.getenv("LINKEDIN_EMAIL", "")
-    linkedin_pass = env_vars.get("LINKEDIN_PASSWORD", "") or os.getenv("LINKEDIN_PASSWORD", "")
+    linkedin_email = env_vars.get("LINKEDIN_EMAIL", "") or workspace_env("LINKEDIN_EMAIL", "")
+    linkedin_pass = env_vars.get("LINKEDIN_PASSWORD", "") or workspace_env("LINKEDIN_PASSWORD", "")
     checks.append({
         "id": "linkedin", "label": "LinkedIn credentials",
         "done": bool(linkedin_email) and bool(linkedin_pass),
@@ -326,8 +339,8 @@ async def get_setup_status():
     })
 
     # 8. Cloudflare (optional)
-    cf_id = env_vars.get("CLOUDFLARE_ACCOUNT_ID", "") or os.getenv("CLOUDFLARE_ACCOUNT_ID", "")
-    cf_token = env_vars.get("CLOUDFLARE_API_TOKEN", "") or os.getenv("CLOUDFLARE_API_TOKEN", "")
+    cf_id = env_vars.get("CLOUDFLARE_ACCOUNT_ID", "") or workspace_env("CLOUDFLARE_ACCOUNT_ID", "")
+    cf_token = env_vars.get("CLOUDFLARE_API_TOKEN", "") or workspace_env("CLOUDFLARE_API_TOKEN", "")
     checks.append({
         "id": "cloudflare", "label": "Cloudflare deep crawling",
         "done": bool(cf_id) and bool(cf_token),
@@ -396,13 +409,13 @@ async def get_settings():
     ]
     for key in all_keys:
         if key not in env_vars:
-            env_vars[key] = os.getenv(key, "")
+            env_vars[key] = workspace_env(key, "")
 
     def is_set(k):
         return bool((env_vars.get(k) or "").strip())
 
     # Gmail is authorized once sellbird gmail auth has stored a token file.
-    gmail_token = (PROJECT_ROOT / "data" / "gmail_token.json").is_file()
+    gmail_token = current_home().gmail_token_file.is_file()
 
     return {
         "provider": _current_provider(),
@@ -428,7 +441,7 @@ async def get_settings():
         # in as a public client with PKCE); the token file means signed in.
         "m365_client_id": env_vars.get("M365_CLIENT_ID", ""),
         "m365_tenant_id": env_vars.get("M365_TENANT_ID", ""),
-        "m365_authorized": (PROJECT_ROOT / "data" / "m365_token.json").is_file(),
+        "m365_authorized": current_home().m365_token_file.is_file(),
         "reoon_api_key_set": is_set("REOON_API_KEY"),
         "zerobounce_api_key_set": is_set("ZEROBOUNCE_API_KEY"),
         "hunter_api_key_set": is_set("HUNTER_API_KEY"),
@@ -438,6 +451,7 @@ async def get_settings():
 @app.post("/api/settings/env")
 async def save_env_settings(request: Request):
     """Save environment variables to .env file."""
+    require_self_hosted("env_settings")
     try:
         data = await request.json()
     except Exception:
@@ -476,15 +490,17 @@ async def save_env_settings(request: Request):
                 return {"success": False, "message": "Could not write .env file."}
             # The sign-in clients take effect now, so the Inboxes tab can sign in
             # without a restart (load_dotenv never overwrites a value already set).
-            for key in ("GMAIL_CLIENT_ID", "GMAIL_CLIENT_SECRET", "M365_CLIENT_ID", "M365_TENANT_ID"):
-                if key in updates:
-                    os.environ[key] = updates[key]
+            if not current_home().hosted:
+                for key in ("GMAIL_CLIENT_ID", "GMAIL_CLIENT_SECRET", "M365_CLIENT_ID", "M365_TENANT_ID"):
+                    if key in updates:
+                        os.environ[key] = updates[key]
     return {"success": True}
 
 
 @app.post("/api/trulyinbox/connect")
 async def trulyinbox_connect(request: Request):
     """Check a TrulyInbox key against the sending mailbox, then save it to .env."""
+    require_self_hosted("env_settings")
     from sellbird import deliverability as d
     from sellbird.integrations import trulyinbox as ti
     try:
@@ -505,7 +521,7 @@ async def trulyinbox_connect(request: Request):
     if not address:
         return JSONResponse({"success": False, "message": ti.NO_ADDRESS}, status_code=400)
     workspace = (_read_env_file().get("TRULYINBOX_WORKSPACE_ID", "")
-                 or os.getenv("TRULYINBOX_WORKSPACE_ID", "")).strip()
+                 or workspace_env("TRULYINBOX_WORKSPACE_ID", "")).strip()
     ti.forget_rejected(key)
     try:
         client = ti.TrulyInbox(key, workspace)
@@ -531,13 +547,13 @@ async def trulyinbox_connect(request: Request):
 async def get_rename_notice():
     """Whether to say "Harvey is now Sellbird": once, after an upgrade moved files."""
     from sellbird import legacy
-    return {"show": legacy.welcome_pending(legacy.PROJECT_ROOT)}
+    return {"show": legacy.welcome_pending(current_home().root if current_home().hosted else legacy.PROJECT_ROOT)}
 
 
 @app.post("/api/rename-notice/dismiss")
 async def dismiss_rename_notice():
     from sellbird import legacy
-    legacy.dismiss_welcome(legacy.PROJECT_ROOT)
+    legacy.dismiss_welcome(current_home().root if current_home().hosted else legacy.PROJECT_ROOT)
     return {"success": True}
 
 
@@ -651,7 +667,7 @@ async def get_company():
         await state.init_db()
         raw = await state.get_setting(PROPOSED_KEY)
         proposed = json.loads(raw) if raw else None
-        return company_view(load_config(), PROJECT_ROOT, proposed)
+        return company_view(load_config(), current_home().root, proposed)
     except Exception as e:
         return JSONResponse({"error": f"Couldn't read your config: {e}"}, status_code=500)
 
@@ -827,8 +843,11 @@ async def add_feedback(request: Request):
         return {"success": False, "message": "Comment is required."}
     feedback_id = uuid.uuid4().hex[:12]
     try:
-        DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-        async with storage.connect(str(DB_PATH)) as db:
+        db_path = current_home().db_path
+        backend, name = storage.split(db_path)
+        if backend is None:
+            Path(name).parent.mkdir(parents=True, exist_ok=True)
+        async with storage.connect(str(db_path)) as db:
             # Ensure the table exists so feedback works even on a fresh install
             await db.execute(
                 """CREATE TABLE IF NOT EXISTS feedback (
@@ -866,8 +885,8 @@ async def get_feedback(entity_type: str, entity_id: str):
 @app.get("/api/sellbird/status")
 async def get_sellbird_status():
     """Check if Sellbird is currently running."""
-    pid = _check_sellbird_pid()
-    started = _sellbird_started_at.isoformat() if _sellbird_started_at else None
+    pid = None if current_home().hosted else _check_sellbird_pid()
+    started = (_sellbird_started_at.isoformat() if _sellbird_started_at else None) if not current_home().hosted else None
     try:
         state = _state()
         await state.init_db()
@@ -881,6 +900,7 @@ async def get_sellbird_status():
 @app.post("/api/sellbird/start")
 async def start_sellbird():
     """Start Sellbird's heartbeat loop as a subprocess."""
+    require_self_hosted("local_ai_loop")
     global _sellbird_process, _sellbird_started_at
 
     if _check_sellbird_pid():
@@ -928,6 +948,7 @@ async def start_sellbird():
 @app.post("/api/sellbird/stop")
 async def stop_sellbird():
     """Stop the Sellbird subprocess."""
+    require_self_hosted("local_ai_loop")
     global _sellbird_process, _sellbird_started_at
 
     pid = _check_sellbird_pid()
@@ -976,6 +997,7 @@ async def stop_sellbird():
 @app.get("/api/sellbird/logs")
 async def get_sellbird_logs():
     """Get recent log lines."""
+    require_self_hosted("process_logs")
     if not LOG_FILE.exists():
         return {"lines": []}
     try:
@@ -1200,7 +1222,7 @@ async def get_prospects():
 
 def _state():
     from sellbird.state import StateManager
-    return StateManager(db_path=str(DB_PATH))
+    return StateManager(db_path=str(current_home().db_path))
 
 
 # What a reviewer needs next to a draft to check its claims against the facts.
@@ -1469,6 +1491,10 @@ def _sellbird_can_send() -> bool:
     config can't be read, the answer is yes (the safe side: no hand sends).
     """
     try:
+        # An absent database has no confirmed delivery state. Never offer a
+        # manual-send action based on optimistic empty query results.
+        if not storage.exists(current_home().db_path):
+            return True
         from sellbird.config import load_config, load_env
         from sellbird.integrations.mail_provider import NATIVE_PROVIDERS, get_mail_provider
         config, env = load_config(), load_env()
@@ -1488,10 +1514,14 @@ def _extra_inboxes_connected() -> bool:
     """Whether an inbox besides the main one is connected (sellbird inboxes):
     Sellbird sends from it even while the main mailbox isn't signed in."""
     import sqlite3
-    if not Path(DB_PATH).exists():
+    # Unknown hosted mailbox state must never allow duplicate hand sends.
+    if current_home().hosted:
+        return True
+    db_path = current_home().db_path
+    if not Path(db_path).exists():
         return False
     try:
-        with sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True) as db:
+        with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as db:
             row = db.execute("SELECT 1 FROM mailboxes WHERE state != 'retired' LIMIT 1").fetchone()
     except sqlite3.Error:
         return False   # no table yet: no extra inbox
@@ -1531,9 +1561,9 @@ async def _sellbird_committed_ids() -> set[str]:
     ids = {r["prospect_id"] for r in await query_db(
         "SELECT DISTINCT prospect_id FROM outbox WHERE status IN ('approved', 'sending', 'sent') "
         "OR (status = 'failed' AND substr(error, 1, ?) = ?)",
-        (len(MAYBE_SENT_PREFIX), MAYBE_SENT_PREFIX))}
+        (len(MAYBE_SENT_PREFIX), MAYBE_SENT_PREFIX), strict=True)}
     for row in await query_db(
-            "SELECT prospect_ids_json FROM campaigns WHERE COALESCE(instantly_campaign_id, '') != ''"):
+            "SELECT prospect_ids_json FROM campaigns WHERE COALESCE(instantly_campaign_id, '') != ''", strict=True):
         try:
             found = json.loads(row.get("prospect_ids_json") or "[]")
         except (json.JSONDecodeError, TypeError):
@@ -1545,7 +1575,7 @@ async def _sellbird_committed_ids() -> set[str]:
 
 async def _hand_sent_ids() -> set[str]:
     from sellbird.state import MANUAL_SEND_KEY
-    rows = await query_db("SELECT key FROM settings WHERE key LIKE ?", (MANUAL_SEND_KEY + "%",))
+    rows = await query_db("SELECT key FROM settings WHERE key LIKE ?", (MANUAL_SEND_KEY + "%",), strict=True)
     return {r["key"][len(MANUAL_SEND_KEY):] for r in rows}
 
 
@@ -1558,10 +1588,10 @@ async def _sellbird_sent_to(prospect_id: str) -> bool:
     if await query_db(
             "SELECT 1 FROM outbox WHERE prospect_id = ? AND (status IN ('sending', 'sent') "
             "OR (status = 'failed' AND substr(error, 1, ?) = ?)) LIMIT 1",
-            (prospect_id, len(MAYBE_SENT_PREFIX), MAYBE_SENT_PREFIX)):
+            (prospect_id, len(MAYBE_SENT_PREFIX), MAYBE_SENT_PREFIX), strict=True):
         return True
     for row in await query_db(
-            "SELECT prospect_ids_json FROM campaigns WHERE COALESCE(instantly_campaign_id, '') != ''"):
+            "SELECT prospect_ids_json FROM campaigns WHERE COALESCE(instantly_campaign_id, '') != ''", strict=True):
         try:
             if prospect_id in json.loads(row.get("prospect_ids_json") or "[]"):
                 return True
@@ -1588,7 +1618,7 @@ async def mark_prospect_sent(prospect_id: str, request: Request):
         if not isinstance(body, dict) or not isinstance(body.get("sent", True), bool):
             return _refuse('expected {"sent": true|false}', 400)
         sent = body.get("sent", True)
-        rows = await query_db("SELECT status FROM prospects WHERE id = ?", (prospect_id,))
+        rows = await query_db("SELECT status FROM prospects WHERE id = ?", (prospect_id,), strict=True)
         if not rows:
             return _refuse("unknown prospect", 404)
         current = rows[0].get("status") or "new"
@@ -1686,7 +1716,7 @@ async def export_prospects(all: bool = False, min_score: int = 0, email_status: 
     from sellbird.state import StateManager
     from sellbird.export import export_prospects_csv
 
-    state = StateManager(db_path=str(DB_PATH))
+    state = _state()
     try:
         await state.init_db()
         statuses = [s.strip() for s in email_status.split(",") if s.strip()] or None
@@ -1706,6 +1736,8 @@ async def export_prospects(all: bool = False, min_score: int = 0, email_status: 
 @app.get("/api/campaigns")
 async def get_campaigns():
     rows = await query_db("SELECT * FROM campaigns ORDER BY created_at DESC LIMIT 100")
+    if not rows:
+        return []
     sellbird_sends = _sellbird_can_send()
     send_as = "" if sellbird_sends else _send_as()
     footer = _compliance_view()["footer"]
@@ -2012,10 +2044,10 @@ async def get_discovery_providers():
             "default": DEFAULT_PROVIDER,
             "selected": await state.get_setting("discovery_provider") or DEFAULT_PROVIDER,
             "paused": await state.get_setting("discovery_paused"),
-            "running": bool(_discovery_task and not _discovery_task.done()),
-            "running_kind": _discovery_kind,
+            "running": (False if current_home().hosted else bool(_discovery_task and not _discovery_task.done())),
+            "running_kind": ("" if current_home().hosted else _discovery_kind),
             "unprofiled": await state.count_companies_needing_profile(),
-            "last_report": _discovery_report,
+            "last_report": (None if current_home().hosted else _discovery_report),
         }
     except Exception as e:
         logger.exception("discovery providers failed")
@@ -2057,6 +2089,7 @@ async def start_discovery(request: Request):
     Discovery takes minutes, not milliseconds — holding the request open
     would just time out. Progress shows up in the run log.
     """
+    require_self_hosted("local_discovery")
     global _discovery_task, _discovery_report
 
     if _discovery_task and not _discovery_task.done():
@@ -2119,6 +2152,7 @@ async def start_profile():
 
     Free and model-free, so there is nothing to estimate and no cap to set.
     """
+    require_self_hosted("local_discovery")
     global _discovery_task, _discovery_report
 
     if _discovery_task and not _discovery_task.done():
@@ -2256,7 +2290,7 @@ async def get_live_status():
     sellbird_sends = _sellbird_can_send()
     awaiting_review = await _scalar("SELECT COUNT(*) FROM outbox WHERE status = 'pending_review'")
     by_hand: set[str] = set()
-    if not sellbird_sends:
+    if not sellbird_sends and drafted:
         skip = await _sellbird_committed_ids() | await _hand_sent_ids()
         by_hand = {p["id"] for p in prospects
                    if p["id"] in drafted and p["id"] not in skip

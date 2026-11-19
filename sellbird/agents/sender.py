@@ -307,6 +307,12 @@ class Sender:
         remaining = max_sends - sends_today
         if remaining <= 0:
             logger.info(f"Sender: Daily send limit reached ({sends_today}/{max_sends}). Skipping.")
+            # A capacity hold is not an error: resume after local midnight.
+            tomorrow = (_local_now().replace(hour=0, minute=1, second=0, microsecond=0)
+                        + timedelta(days=1))
+            await self.state.set_setting(
+                "instantly_deploy_retry_after",
+                tomorrow.astimezone(timezone.utc).replace(tzinfo=None).isoformat())
             return
 
         for campaign in draft_campaigns:
@@ -314,6 +320,28 @@ class Sender:
                 await self._deploy_campaign(campaign)
             except Exception as e:
                 logger.error(f"Sender: Failed to deploy campaign {campaign.name}: {e}")
+
+        # If no campaign moved forward, yield subsequent cycles to the writer
+        # and scout instead of retrying the same failing Instantly call forever.
+        # Any successful activation clears the cooldown and failure counter.
+        remaining_drafts = await self.state.get_campaigns_by_status("draft")
+        if len(remaining_drafts) < len(draft_campaigns):
+            await self.state.set_setting("instantly_deploy_failures", "0")
+            await self.state.set_setting("instantly_deploy_retry_after", "")
+        else:
+            raw_failures = await self.state.get_setting("instantly_deploy_failures")
+            try:
+                failures = max(0, int(raw_failures or "0")) + 1
+            except ValueError:
+                failures = 1
+            failures = min(failures, 16)
+            delay_minutes = min(60, 5 * (2 ** min(failures - 1, 4)))
+            retry_at = _utcnow() + timedelta(minutes=delay_minutes)
+            await self.state.set_setting("instantly_deploy_failures", str(failures))
+            await self.state.set_setting("instantly_deploy_retry_after",
+                                         retry_at.isoformat(timespec="seconds"))
+            logger.warning("Sender: no Instantly draft activated; retry after %s",
+                           retry_at.isoformat(timespec="seconds"))
 
     def _validate_sequence(self, campaign) -> bool:
         """Never deploy a broken or empty sequence."""

@@ -262,16 +262,16 @@ async def set_choice(state, choice: str) -> None:
 
 def sending_address(config) -> str:
     """The mailbox Sellbird sends from: the SMTP login when it's an address, else the persona's."""
-    import os
+    from sellbird.secrets import workspace_env
     email = config.channels.email
-    smtp_user = os.getenv("SMTP_USERNAME", "").strip() if email.provider == "smtp" else ""
+    smtp_user = workspace_env("SMTP_USERNAME", "").strip() if email.provider == "smtp" else ""
     return smtp_user if "@" in smtp_user else config.persona.email
 
 
 def key_from_env() -> tuple[str, str]:
-    import os
-    return (os.getenv("TRULYINBOX_API_KEY", "").strip(),
-            os.getenv("TRULYINBOX_WORKSPACE_ID", "").strip())
+    from sellbird.secrets import workspace_env
+    return (workspace_env("TRULYINBOX_API_KEY", "").strip(),
+            workspace_env("TRULYINBOX_WORKSPACE_ID", "").strip())
 
 
 def describe_status(health: MailboxHealth | None, error: str, choice: str) -> str:

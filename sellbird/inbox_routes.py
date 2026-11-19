@@ -26,6 +26,7 @@ from sellbird.mailboxes import (
     check_provider_allows_inboxes, connect_oauth_mailbox, connect_smtp_mailbox, load_inboxes,
 )
 from sellbird.secrets import SecretStore, SecretStoreUnavailable
+from sellbird.workspace_home import current_home, require_self_hosted
 
 logger = logging.getLogger("sellbird.inbox_routes")
 
@@ -39,7 +40,8 @@ def _refuse(message: str, code: int = 400):
 
 def _store() -> MailboxStore:
     from sellbird import dashboard
-    return MailboxStore(db_path=str(dashboard.DB_PATH))
+    from sellbird.workspace_home import current_home
+    return MailboxStore(db_path=str(current_home().db_path))
 
 
 def _secrets() -> SecretStore:
@@ -126,7 +128,7 @@ async def list_inboxes():
         "connect_command": "sellbird inboxes connect gmail|microsoft|smtp --address you@domain",
         "can_connect": _can_connect(env),
         "connect_problems": _connect_problems(env),
-        "connecting": _connect_job_view(),
+        "connecting": ({"state": "idle"} if current_home().hosted else _connect_job_view()),
     }
 
 
@@ -373,6 +375,7 @@ def _connect_fields(body: dict) -> tuple[str, str, str]:
 async def connect_main_mailbox():
     """Sign the main mailbox in from the dashboard: the same browser sign-in
     as `sellbird gmail auth` / `sellbird microsoft auth`."""
+    require_self_hosted("local_ai_loop")
     global _connect_task
     config, env = _config_env()
     provider = (config.channels.email.provider or "").strip().lower()
@@ -394,6 +397,7 @@ async def connect_main_mailbox():
 
 @router.post("/api/inboxes/connect/{kind}")
 async def connect_inbox(kind: str, request: Request):
+    require_self_hosted("local_ai_loop")
     global _connect_task
     if kind not in ("gmail", "microsoft", "smtp"):
         return _refuse("Connect gmail, microsoft or smtp.", 404)
@@ -422,6 +426,7 @@ async def connect_inbox(kind: str, request: Request):
 
 @router.get("/api/inboxes/connect/status")
 async def connect_status():
+    require_self_hosted("local_ai_loop")
     return _connect_job_view()
 
 
