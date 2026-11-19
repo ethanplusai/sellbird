@@ -9,6 +9,14 @@ minor versions can still change behaviour.
 
 ### Added
 
+- **A clearer company filter on the Signals tab.** The cohort builder is now
+  "Filter companies by signal": one row per confirmed signal with Any, Must
+  have and Must not have, instead of the same list twice. The result says the
+  filter back in words, has a Clear filters button, and says what to do when
+  only Must not have is picked (that alone used to show nothing). The intro
+  says plainly that it only filters companies already found and doesn't change
+  who gets emailed.
+
 - **`writer.require_tip: true` skips prospects with nothing to build a tip
   on.** A first email is meant to name one concrete thing the sender would
   change; with no finding about the company, the draft could only say it had no

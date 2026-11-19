@@ -34,7 +34,7 @@ Every signal shows what it is in plain language, **what it costs**, and how many
 
 ### Then a cohort is a query, not a list
 
-Once signals are confirmed, the dashboard's cohort builder turns them into a target set — pick what a good prospect **must have**, what **disqualifies** them, and a **range** for numeric signals (organic rank 11 to 30), and it counts the matches live:
+Once signals are confirmed, the Signals tab's "Filter companies by signal" (the cohort builder) turns them into a target set — set each signal to **Must have**, **Must not have** or Any, and a **range** for numeric signals (organic rank 11 to 30), and it counts the matches live:
 
 ```
 Has a marketing agency  AND  running Google Ads  AND NOT  already has online booking
