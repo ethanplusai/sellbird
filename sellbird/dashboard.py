@@ -30,6 +30,7 @@ logger = logging.getLogger("sellbird.dashboard")
 
 from sellbird import agent_policy  # noqa: E402
 from sellbird import dashboard_auth as auth  # noqa: E402
+from sellbird.integrations.mail_provider import clean_reply_text  # noqa: E402
 from sellbird.paths import PACKAGE_ROOT, PROJECT_ROOT, is_checkout  # noqa: E402
 from sellbird import storage  # noqa: E402
 from sellbird.pidfile import LOCK_FILE, loop_lock_held, pid_alive  # noqa: E402
@@ -1858,6 +1859,12 @@ async def get_conversations(awaiting: bool = False):
             row["thread"] = json.loads(row.get("thread_json", "[]"))
         except (json.JSONDecodeError, TypeError):
             row["thread"] = []
+        # Replies stored before HTML was turned into text can hold markup or
+        # "&nbsp;": show their words. The stored thread is left as it is.
+        for message in row["thread"] if isinstance(row["thread"], list) else []:
+            if isinstance(message, dict) and isinstance(message.get("content"), str) \
+                    and message.get("sender") == "prospect":
+                message["content"] = clean_reply_text(message["content"])
         # A prospect in two campaigns: show the sequence this reply answers.
         camp = row.get("campaign_id") or ""
         row["emails"] = [{k: v for k, v in e.items() if k != "campaign_id"}

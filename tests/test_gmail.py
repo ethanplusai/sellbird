@@ -82,7 +82,7 @@ def test_html_fallback_decodes_before_stripping_tags():
         "text/html; charset=windows-1252", mime_type="text/html",
     )
     assert GmailProvider._extract_text({"mimeType": "multipart/alternative", "parts": [part]}) == (
-        " Ça coûte 20 €. "
+        "Ça coûte 20 €."
     )
 
 
