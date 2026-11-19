@@ -560,7 +560,8 @@ function stageRow(st) {
   const cell = (label, html) => '<div class="pipe-cell" data-label="' + label + '"><span class="pipe-val">' + html + '</span></div>';
   const errs = st.errors_today ? '<span class="pipe-sub pipe-bad">' + Number(st.errors_today) + ' error' + (st.errors_today === 1 ? '' : 's') + '</span>' : '';
   return '<div class="pipe-row is-' + escHtml(st.state) + '">' +
-    '<div class="pipe-name"><button class="link-btn" onclick="goTab(' + jsq(st.tab || 'today') + ')">' + escHtml(st.label) + '</button>' +
+    // The stage name is a label, not a link: the Next line below says where to go.
+    '<div class="pipe-name"><span class="pipe-label">' + escHtml(st.label) + '</span>' +
       '<span class="pipe-sub">' + mdCode(st.how || '') + '</span></div>' +
     '<div class="pipe-state"><span class="badge t-' + meta[1] + '">' + escHtml(meta[0]) + '</span></div>' +
     cell('Last run', stageLast(st)) + cell('Next run', stageNext(st)) +
