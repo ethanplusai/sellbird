@@ -30,6 +30,12 @@ minor versions can still change behaviour.
 
 ### Changed
 
+- **Conversations is a compact list, like an inbox.** Each conversation is one
+  row: who, their company, the latest message on one line, its status and how
+  long ago. Click a row (or press Enter) to open the whole thread in place;
+  arrow keys or j and k move between rows and Escape closes it. "Needs you" is
+  now "Needs reply", and a waiting draft shows as "Draft to review".
+
 - **The writer sees what Sellbird read off a company's own site.** The free
   homepage signals (no structured data, a site untouched for six months, a very
   small sitemap, AI crawlers blocked) were collected but
