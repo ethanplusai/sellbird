@@ -9,6 +9,12 @@ minor versions can still change behaviour.
 
 ### Added
 
+- **Quiet hours can be turned off.** Set `usage.quiet_hours.enabled: false`
+  and Sellbird prospects, writes and reads replies around the clock. Cold
+  email still goes out only inside `channels.email.send_window` when one is
+  set, so with `recipient_timezone: true` it keeps landing in each
+  recipient's office hours. Quiet hours stay on by default.
+
 - **`writer.require_tip: true` skips prospects with nothing to build a tip
   on.** A first email is meant to name one concrete thing the sender would
   change; with no finding about the company, the draft could only say it had no

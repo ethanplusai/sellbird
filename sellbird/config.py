@@ -649,6 +649,10 @@ def compliance_notice(config) -> str:
 
 
 class QuietHoursConfig(BaseModel):
+    # false: no quiet hours at all. Sellbird prospects, writes and reads
+    # replies around the clock; cold email still waits for
+    # channels.email.send_window when one is set.
+    enabled: bool = True
     start: str = "22:00"
     end: str = "07:00"
     timezone: str = "America/New_York"
