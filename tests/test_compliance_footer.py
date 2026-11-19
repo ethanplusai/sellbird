@@ -1048,6 +1048,41 @@ def test_an_opt_out_line_has_to_say_the_emails_can_stop():
     assert ComplianceConfig(opt_out_line="").opt_out_line == ""
 
 
+# ── German opt-out line ──
+
+@pytest.mark.parametrize("line", [
+    "Kein Interesse? Eine kurze Antwort genügt, dann schreibe ich Ihnen nicht mehr.",
+    "Kein Interesse? Eine kurze Antwort genugt, dann schreibe ich Ihnen nicht mehr.",
+    "Antworten Sie „abmelden“ und ich nehme Sie von meiner Liste.",
+    "Nicht relevant? Kurz Bescheid geben, dann melde ich mich nicht wieder.",
+    "Falls das nichts für Sie ist: Eine Antwort reicht und ich lasse Sie in Ruhe.",
+    "Antworten Sie mit STOPP, dann erhalten Sie keine E-Mails mehr.",
+    "Lieber nicht? Dann hören Sie nichts mehr von mir.",
+    "Sie möchten nicht mehr kontaktiert werden? Antworten Sie einfach.",
+    "Antworten Sie „nein danke“ und ich streiche Sie aus dem Verteiler.",
+])
+def test_a_german_opt_out_line_is_accepted(line):
+    assert ComplianceConfig(opt_out_line=line).opt_out_line == line
+
+
+@pytest.mark.parametrize("line", [
+    "Viele Grüße aus Musterstadt",
+    "Mit freundlichen Grüßen",
+    "Ich freue mich auf Ihre Antwort!",
+    "Schönen Tag noch.",
+])
+def test_a_german_sign_off_is_not_an_opt_out_line(line):
+    import pydantic
+    with pytest.raises(pydantic.ValidationError, match="stop these emails"):
+        ComplianceConfig(opt_out_line=line)
+
+
+def test_a_german_line_that_asks_for_a_click_is_refused():
+    import pydantic
+    with pytest.raises(pydantic.ValidationError, match="link"):
+        ComplianceConfig(opt_out_line="Klicken Sie hier, um sich abzumelden.")
+
+
 # ── Italian opt-out line ──
 
 @pytest.mark.parametrize("line", [
