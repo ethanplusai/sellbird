@@ -40,7 +40,7 @@ from sellbird.brain import Brain
 from sellbird.collectors import people as people_mod
 from sellbird.collectors.discover import site_name_from_html
 from sellbird.collectors.profile import _reads_like_title, fold_accents, looks_like_challenge
-from sellbird.config import SellbirdConfig, EnvConfig, live_do_not_contact
+from sellbird.config import EnvConfig, ProspectingConfig, SellbirdConfig, live_do_not_contact
 from sellbird.gate import do_not_contact_domain_match
 from sellbird.integrations.email_finder import (
     DEFAULT_PATTERN, SMALL_BUSINESS_PATTERN, find_email, site_email_evidence,
@@ -55,8 +55,12 @@ from sellbird.untrusted import UNTRUSTED_RULE, fence
 
 logger = logging.getLogger("sellbird.scout")
 
+# Per-cycle limits. Each is a setting under `prospecting:` in sellbird.yaml
+# (sellbird/config.py, ProspectingConfig); these are its defaults, used when a
+# config has no `prospecting` block of its own.
+_LIMIT_DEFAULTS = ProspectingConfig()
 # Max queries per cycle to avoid rate limits
-MAX_QUERIES_PER_CYCLE = 3
+MAX_QUERIES_PER_CYCLE = _LIMIT_DEFAULTS.max_queries_per_cycle
 # Delay between search requests (seconds)
 SEARCH_DELAY = (2, 5)
 
@@ -69,7 +73,7 @@ MAX_RESULTS_PER_QUERY = 20
 # Serper free accounts reject num > 10 with HTTP 400
 # "Query pattern not allowed for free accounts" (verified 2026-10-26).
 SERPER_MAX_NUM = 10
-MAX_COMPANIES_PER_CYCLE = 10
+MAX_COMPANIES_PER_CYCLE = _LIMIT_DEFAULTS.max_companies_per_cycle
 
 # Reading a company's site: the homepage, then up to five pages its own menu
 # links to (team, meet-the-doctors, about, contact...), never more than six
@@ -81,7 +85,7 @@ MAX_SITE_PAGES = 6
 MAX_SITE_FETCHES = 10
 FALLBACK_SITE_PATHS = ("/about", "/about-us", "/team", "/our-team", "/contact", "/contact-us")
 # Named decision makers taken from one company per visit, likeliest first.
-MAX_CONTACTS_PER_COMPANY = 2
+MAX_CONTACTS_PER_COMPANY = _LIMIT_DEFAULTS.max_contacts_per_company
 # With no evidence of a company's email format, guess first@ only when
 # something independent of its website says it is small: the ICP's company
 # size, the company's own size on file, or a local-business listing as its
@@ -98,13 +102,13 @@ INBOX_PAGES = ("/contact", "/contact-us")
 INBOX_PREFERRED = ("owner", "office", "info", "contact", "contactus", "hello",
                    "team", "service", "sales", "estimates", "quotes",
                    "inquiries", "enquiries", "admin", "support")
-MAX_PROSPECTS_PER_CYCLE = 25
+MAX_PROSPECTS_PER_CYCLE = _LIMIT_DEFAULTS.max_prospects_per_cycle
 
 # Hunter domain-searches per heartbeat. The monthly budget itself is shared
 # with email-pattern lookups and set by HUNTER_MONTHLY_SEARCHES (see
 # integrations/email_finder.py); this just paces it, since a heartbeat every
 # 15 minutes would spend a free-tier month in a few hours otherwise.
-HUNTER_DOMAINS_PER_CYCLE = 1
+HUNTER_DOMAINS_PER_CYCLE = _LIMIT_DEFAULTS.hunter_domains_per_cycle
 
 # Rotate a small pool of realistic desktop user-agents. Scrapers that always
 # send one UA are trivially fingerprinted and blocked.
@@ -156,6 +160,19 @@ class Scout:
         self._site_evidence: dict[str, dict] = {}
         self._own_domains: dict[str, bool] = {}
         self._challenged: set[str] = set()
+
+    def _limit(self, name: str, default: int) -> int:
+        """A per-cycle limit from ``prospecting`` in the config, or
+        ``default`` (the module constant) when the config has none."""
+        prospecting = getattr(getattr(self, "config", None), "prospecting", None)
+        value = getattr(prospecting, name, None)
+        return default if value is None else value
+
+    def _query_limit(self) -> int:
+        return self._limit("max_queries_per_cycle", MAX_QUERIES_PER_CYCLE)
+
+    def _prospect_limit(self) -> int:
+        return self._limit("max_prospects_per_cycle", MAX_PROSPECTS_PER_CYCLE)
 
     async def run(self):
         """Main prospecting flow: find leads matching ICP."""
@@ -394,7 +411,7 @@ class Scout:
         Returns list of (url, snippet) tuples.
         Tries backends in order: Serper API → TinyFish Search API → DuckDuckGo → Bing → Google.
         """
-        if self._queries_this_cycle >= MAX_QUERIES_PER_CYCLE:
+        if self._queries_this_cycle >= self._query_limit():
             logger.info("Scout: Query limit reached for this cycle. Will continue next cycle.")
             return []
 
@@ -616,7 +633,7 @@ class Scout:
         if remaining <= 0:
             return 0
 
-        batch_size = min(remaining, HUNTER_DOMAINS_PER_CYCLE)
+        batch_size = min(remaining, self._limit("hunter_domains_per_cycle", HUNTER_DOMAINS_PER_CYCLE))
         try:
             companies = await self.state.companies_needing_prospects(limit=batch_size)
         except Exception as e:
@@ -684,7 +701,7 @@ class Scout:
                     f"Scout: Added {prospect.full_name()} ({prospect.title}) "
                     f"at {prospect.company} [hunter]"
                 )
-                if count >= MAX_PROSPECTS_PER_CYCLE:
+                if count >= self._prospect_limit():
                     return count
 
         return count
@@ -707,7 +724,7 @@ class Scout:
 
         try:
             companies = await self.state.companies_needing_prospects(
-                limit=MAX_COMPANIES_PER_CYCLE
+                limit=self._limit("max_companies_per_cycle", MAX_COMPANIES_PER_CYCLE)
             )
         except Exception as e:
             logger.debug(f"companies_needing_prospects failed: {e}")
@@ -750,7 +767,7 @@ class Scout:
                     f"Scout: Added {prospect.full_name()} ({prospect.title}) "
                     f"at {prospect.company} [backfill]"
                 )
-                if count >= MAX_PROSPECTS_PER_CYCLE:
+                if count >= self._prospect_limit():
                     return count
 
         return count
@@ -842,7 +859,7 @@ class Scout:
                             f"Scout: Added prospect {prospect.full_name()} "
                             f"at {company_name}"
                         )
-                        if count >= MAX_PROSPECTS_PER_CYCLE:
+                        if count >= self._prospect_limit():
                             return count
 
             return count
@@ -864,7 +881,7 @@ class Scout:
         industry = self.config.icp.industries[0] if self.config.icp.industries else ""
 
         for title in self.config.icp.titles:
-            if self._queries_this_cycle >= MAX_QUERIES_PER_CYCLE:
+            if self._queries_this_cycle >= self._query_limit():
                 break
 
             query = f'site:linkedin.com/in "{title}"'
@@ -945,7 +962,7 @@ class Scout:
                     f"Scout: {domain} is on compliance.do_not_contact ({entry}); skipping.")
                 continue
             unique.append(c)
-        companies = unique[:MAX_COMPANIES_PER_CYCLE]
+        companies = unique[:self._limit("max_companies_per_cycle", MAX_COMPANIES_PER_CYCLE)]
 
         logger.info(f"Scout: Found {len(companies)} candidate companies.")
 
@@ -1002,7 +1019,7 @@ class Scout:
                 f"Scout: Added {prospect.full_name()} ({prospect.title}) "
                 f"at {prospect.company} [score: {prospect.score}]"
             )
-            if count >= MAX_PROSPECTS_PER_CYCLE:
+            if count >= self._prospect_limit():
                 break
 
         return count
@@ -1012,7 +1029,7 @@ class Scout:
         companies = []
 
         for query in self._build_company_search_queries():
-            if self._queries_this_cycle >= MAX_QUERIES_PER_CYCLE:
+            if self._queries_this_cycle >= self._query_limit():
                 break
 
             results = await self._web_search(query)
@@ -1061,7 +1078,7 @@ class Scout:
             ])
 
         for query in directory_queries:
-            if self._queries_this_cycle >= MAX_QUERIES_PER_CYCLE:
+            if self._queries_this_cycle >= self._query_limit():
                 break
 
             results = await self._web_search(query)
@@ -1670,7 +1687,7 @@ Respond ONLY with the JSON array."""
             if not first_name or not last_name:
                 continue
             named_on_site = True
-            if considered >= MAX_CONTACTS_PER_COMPANY:
+            if considered >= self._limit("max_contacts_per_company", MAX_CONTACTS_PER_COMPANY):
                 break
             considered += 1
 
@@ -1975,7 +1992,7 @@ Respond ONLY with the JSON array."""
                 f"Scout: Added {prospect.full_name()} ({prospect.title}) "
                 f"at {prospect.company} via job-board signal [score: {prospect.score}]"
             )
-            if count >= MAX_PROSPECTS_PER_CYCLE:
+            if count >= self._prospect_limit():
                 break
         return count
 
