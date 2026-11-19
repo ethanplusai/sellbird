@@ -15,6 +15,7 @@ import re
 from datetime import datetime, timezone
 
 from sellbird.brain import Brain
+from sellbird.edits import rules_block as learned_rules_block
 from sellbird.config import EmailRulesError, SellbirdConfig, compliance_of, load_email_rules
 from sellbird.email_style import (
     BREAKUP_MAX_WORDS, FIRST_EMAIL_MAX_WORDS, FOLLOW_UP_MAX_WORDS,
@@ -464,6 +465,93 @@ class Writer:
                 f"({'awaiting approval' if require_approval else 'approved'})."
             )
 
+    async def _observed_facts(self, company_id) -> list[str]:
+        """Fact lines from collected signals that say what a company needs:
+        its regulator rating and the roles it is hiring for. [] on any error."""
+        get = getattr(getattr(self, "state", None), "get_observations", None)
+        if not company_id or get is None:
+            return []
+        try:
+            rows = await get(company_id=company_id, limit=200)
+        except Exception as e:
+            logger.warning(f"Writer: could not read signals: {e}")
+            return []
+        facts, roles = [], []
+        rating = next((r for r in rows if r.get("signal_code") == "CQC_RATING"
+                       and r.get("value_text")), None)
+        if rating:
+            facts.append(f"- CQC rating: {rating['value_text']}")
+        for r in rows:
+            text = str(r.get("value_text") or "").strip()
+            if r.get("value_num") == 0:  # checked, no matching role
+                continue
+            if r.get("signal_code") == "HIRING_ROLE" and text and text not in roles:
+                roles.append(text)
+        if roles:
+            facts.append("- Jobs advertised on their site: " + "; ".join(roles[:4]))
+        return facts
+
+    # Discovery source -> (collector module with latest_report, regulator name).
+    INSPECTION_SOURCES = {
+        "cqc": ("cqc", "CQC"),
+        "care_inspectorate": ("care_inspectorate", "Care Inspectorate (Scotland)"),
+        "ciw": ("ciw", "Care Inspectorate Wales"),
+        "rqia": ("rqia", "RQIA (Northern Ireland)"),
+        "crown_dependencies": ("crown_dependencies", "Jersey Care Commission"),
+    }
+
+    async def _inspection_facts(self, company) -> list[str]:
+        """The ratings and inspectors' summary from a registered care
+        service's latest report ([] for anyone else, or when the regulator
+        can't be reached). They tell the writer what the provider needs."""
+        external = str(getattr(company, "external_id", "") or "")
+        source, _, service_id = external.partition(":")
+        if source not in self.INSPECTION_SOURCES or not service_id:
+            return []
+        module, regulator = self.INSPECTION_SOURCES[source]
+        try:
+            import importlib
+
+            import httpx
+            from harvey.paths import PROJECT_ROOT
+            latest_report = importlib.import_module(f"harvey.collectors.{module}").latest_report
+            async with httpx.AsyncClient(
+                timeout=30, follow_redirects=True,
+                headers={"User-Agent": "Mozilla/5.0 (compatible; Harvey)"},
+            ) as client:
+                report = await latest_report(
+                    client, service_id, PROJECT_ROOT / "data" / source)
+        except Exception as e:
+            logger.warning(f"Writer: could not read the {regulator} report: {e}")
+            return []
+        if not report:
+            return []
+        facts = [f"- Regulator: {regulator}"]
+        ratings = report.get("ratings") or {}
+        when = f", published {report['published']}" if report.get("published") else ""
+        if ratings:
+            facts.append(f"- {regulator} ratings (latest report{when}): "
+                         + "; ".join(f"{k} {v}" for k, v in ratings.items()))
+        if report.get("summary"):
+            facts.append(f"- What {regulator} inspectors found (their summary{when}): "
+                         + report["summary"])
+        return facts
+
+    def _contract_facts(self, company) -> list[str]:
+        """The public contract a supplier found through contract awards holds
+        ("Holds a floating support contract with ..."), else []."""
+        source, _, supplier_id = str(getattr(company, "external_id", "") or "").partition(":")
+        if source != "contracts" or not supplier_id:
+            return []
+        try:
+            from harvey.collectors.contracts import contract_facts
+            from harvey.paths import PROJECT_ROOT
+            text = contract_facts(PROJECT_ROOT / "data" / "contracts").get(supplier_id, "")
+        except Exception as e:
+            logger.warning(f"Writer: could not read contract facts: {e}")
+            return []
+        return [f"- Public contract: {text}"] if text else []
+
     async def _startup(self, company_id) -> list[str] | None:
         """Fact lines when the company is a startup (YC, another accelerator,
         a raise it announced; see sellbird.startups), else None."""
@@ -555,6 +643,9 @@ class Writer:
                 facts.append(
                     f"- Signal ({signal.get('type', 'signal')}): {signal.get('detail', '')}"
                 )
+            facts.extend(await self._observed_facts(company.id))
+            facts.extend(await self._inspection_facts(company))
+            facts.extend(self._contract_facts(company))
         facts.extend(await self._site_facts(prospect.company_id))
         if prospect.personalization_notes:
             facts.append(f"- Research notes: {prospect.personalization_notes}")
@@ -579,6 +670,7 @@ class Writer:
         if startup is not None:
             prompt += self._startup_playbook()
         prompt += await self._feedback_block([prospect.id])
+        prompt += learned_rules_block("email 1")
         rules = getattr(self, "email_rules", "")
         prompt += offer_block(self.config)
         prompt += operator_rules_block(rules)
@@ -628,6 +720,7 @@ Return ONLY JSON: {{"subject": "...", "body": "..."}}"""
         # Build context about the prospects
         prospect_summary = "\n".join(
             f"- {p.full_name()}, {p.title} at {p.company}"
+            + (f" ({p.industry})" if p.industry else "")
             + (f" | Notes: {p.personalization_notes}" if p.personalization_notes else "")
             for p in prospects[:5]  # Show sample for context
         )
@@ -677,6 +770,7 @@ Pricing: {self.config.product.pricing}"""
         # Campaign notes only: this template goes to the whole batch, so a
         # note about one person ("met her at the expo") must never reach it.
         prompt += await self._feedback_block([])
+        prompt += learned_rules_block("sequence")
         rules = getattr(self, "email_rules", "")
         prompt += offer_block(self.config)
         prompt += operator_rules_block(rules)

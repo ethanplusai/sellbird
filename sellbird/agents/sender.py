@@ -47,6 +47,31 @@ MIN_FOLLOW_UP_GAP = timedelta(days=1)
 
 logger = logging.getLogger("sellbird.sender")
 
+# Register names are written for filing, not for a sentence: "EXAMPLE 24 CARE
+# LTD", "Example Care - Main Office". _LEGAL strips the company-form suffix and
+# _BRANCH a trailing office label; _KEEP_UPPER are short words that stay
+# capitals when an all-caps name is put into ordinary case.
+_LEGAL = re.compile(r"[\s,]+(ltd\.?|limited|plc|llp|c\.?i\.?c\.?)\s*$", re.I)
+_BRANCH = re.compile(r"\s+[-–—]\s+(main|head|registered)\s+office\s*$", re.I)
+_KEEP_UPPER = {"UK", "NHS", "CIC", "GP", "NW", "NE", "SE", "SW", "HQ", "LD", "ABI"}
+
+
+def spoken_company(name: str) -> str:
+    """The company's name as a person would say it in an email."""
+    name = (name or "").replace("�", "–").strip()
+    name = _BRANCH.sub("", name)
+    for _ in range(2):  # "Acme Care Ltd." or "Acme (UK) Limited LLP"
+        name = _LEGAL.sub("", name).strip()
+    letters = [c for c in name if c.isalpha()]
+    if letters and all(c.isupper() for c in letters) and len(letters) > 3:
+        def word(w: str) -> str:
+            core = w.strip("()&.,'")
+            if core in _KEEP_UPPER or any(ch.isdigit() for ch in core):
+                return w
+            return w[:1] + w[1:].lower()
+        name = " ".join(word(w) for w in name.split())
+    return name
+
 # Max sends drained per heartbeat cycle — spreads volume through the day
 # instead of bursting the daily cap in one minute.
 MAX_SENDS_PER_CYCLE = 8
@@ -623,16 +648,16 @@ class Sender:
 
     def _render(self, text: str, prospect) -> str:
         """Fill merge variables. The pre-send gate rejects any leftovers."""
+        company = spoken_company(prospect.company or "")
         replacements = {
             # A company inbox has no name; "there" keeps "Hi {{first_name}}," readable.
             "first_name": prospect.first_name or ("there" if prospect.is_company_inbox else ""),
             "last_name": prospect.last_name,
-            "company": prospect.company,
+            "company": company,
             "title": prospect.title,
             "personalization": prospect.personalization_notes,
         }
         # "{{company}}'s" for "Parkes Builders" should read "Builders'".
-        company = prospect.company or ""
         if company.endswith(("s", "S")):
             for tag in ("{{company}}", "{{ company }}"):
                 text = text.replace(tag + "'s", company + "'")

@@ -14,6 +14,7 @@ import re
 import unicodedata
 from datetime import datetime, timezone
 
+from sellbird.edits import rules_block as learned_rules_block
 from sellbird.booking import booking_instruction
 from sellbird.brain import Brain, BrainUnavailable
 from sellbird.config import (
@@ -1480,6 +1481,7 @@ NEXT STEP
         # Inject objection handling + sales methodology skills
         if self.skills:
             prompt += "\n\n" + self.skills
+        prompt += learned_rules_block("reply")
         # A startup's founder (YC, another accelerator, a raise they
         # announced) gets the founder playbook. An optional lookup never
         # stops a reply: startup_facts reads a failure as "not a startup".

@@ -830,6 +830,46 @@ class HandoffConfig(BaseModel):
     arguments: dict = {}
 
 
+class WebsiteFinderConfig(BaseModel):
+    """Finding the website of a company a register listed without one.
+
+    One web search per company through the first configured search key
+    (TinyFish, then Serper, then DataForSEO SERP), a few companies per
+    heartbeat, under a daily cap on searches and on dollars.
+    """
+    enabled: bool = True
+    provider: str = "auto"          # auto | tinyfish | serper | dataforseo_serp
+    batch_size: int = 10            # companies per heartbeat
+    max_daily_searches: int = 200
+    max_daily_spend: float = 0.50   # dollars; free providers spend nothing
+    min_confidence: float = 0.8     # below this the company is left alone
+    retry_days: int = 60            # search again for one not found after this
+
+    @field_validator("provider")
+    @classmethod
+    def _valid_provider(cls, v: str) -> str:
+        v = (v or "auto").strip().lower()
+        if v not in ("auto", "tinyfish", "serper", "dataforseo_serp"):
+            raise ValueError("website_finder.provider must be auto, tinyfish, "
+                             "serper or dataforseo_serp")
+        return v
+
+    @field_validator("batch_size", "max_daily_searches", "retry_days")
+    @classmethod
+    def _not_negative(cls, v: int) -> int:
+        if v < 0:
+            raise ValueError("must be 0 or more")
+        return v
+
+    @field_validator("min_confidence")
+    @classmethod
+    def _valid_confidence(cls, v: float) -> float:
+        if not 0.5 <= v <= 1.0:
+            raise ValueError("website_finder.min_confidence must be between 0.5 and 1")
+        return v
+
+
+
 class SellbirdConfig(BaseModel):
     persona: PersonaConfig
     product: ProductConfig
@@ -840,6 +880,7 @@ class SellbirdConfig(BaseModel):
     compliance: ComplianceConfig = ComplianceConfig()
     writer: WriterConfig = WriterConfig()
     handoff: HandoffConfig = HandoffConfig()
+    website_finder: WebsiteFinderConfig = WebsiteFinderConfig()
     # The file it was loaded from, so a running Sellbird can re-read the
     # sending mode from that same file (refresh_sending_mode).
     _source_path: str | None = PrivateAttr(default=None)
@@ -875,6 +916,8 @@ class EnvConfig(BaseModel):
     m365_tenant_id: str = ""
     # Optional: only used when compliance.precleared.enabled is true.
     precleared_api_key: str = ""
+    # Optional: UK directors for companies a register linked to a number.
+    companies_house_api_key: str = ""
 
 
 def _format_validation_error(e: ValidationError) -> str:
@@ -1018,6 +1061,7 @@ def load_env() -> EnvConfig:
         m365_client_id=os.getenv("M365_CLIENT_ID", "").strip(),
         m365_tenant_id=os.getenv("M365_TENANT_ID", "").strip(),
         precleared_api_key=os.getenv("PRECLEARED_API_KEY", "").strip(),
+        companies_house_api_key=os.getenv("COMPANIES_HOUSE_API_KEY", "").strip(),
     )
     return env
 
