@@ -187,7 +187,7 @@ def fallback_scout(team, existing=(), duplicate=False):
     async def scrape(domain):
         return team
 
-    async def resolve(first, last, domain):
+    async def resolve(first, last, domain, **kw):
         return f"{first.lower()}@acme.com", "verified"
 
     async def is_dup(prospect):

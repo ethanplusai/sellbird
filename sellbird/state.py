@@ -73,6 +73,8 @@ FREE_MAIL_DOMAINS = frozenset({
     "telus.net", "bigpond.com", "optusnet.com.au", "orange.fr", "free.fr",
     "wanadoo.fr", "laposte.net", "t-online.de", "libero.it", "mail.ru",
     "naver.com", "seznam.cz", "wp.pl", "o2.pl", "tutanota.com", "tuta.io",
+    "hotmail.es", "outlook.es", "yahoo.es", "live.com.mx", "hotmail.com.mx",
+    "yahoo.com.mx", "outlook.com.mx", "hotmail.com.ar", "yahoo.com.ar",
 })
 
 

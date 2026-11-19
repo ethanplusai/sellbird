@@ -254,3 +254,51 @@ async def test_derive_pattern_spends_and_respects_hunter_budget(state, monkeypat
     _, source, _ = await derive_pattern("second-co.com", state=state)
     assert source == "default"
     assert calls == ["first-co.com"]
+
+
+# ── a second surname (Spanish names) ──
+
+def _google(monkeypatch, exists):
+    async def google_mx(domain):
+        return "aspmx.l.google.com"
+    checked = []
+
+    async def fake_reoon(email, key):
+        checked.append(email)
+        return {"status": "valid" if email in exists else "invalid", "catch_all": False}
+    monkeypatch.setattr(ef, "get_mx_host", google_mx)
+    monkeypatch.setattr(ef, "_hunter_api_key", lambda: "")
+    monkeypatch.setattr(ef, "verify_reoon", fake_reoon)
+    return checked
+
+
+@pytest.mark.asyncio
+async def test_other_surname_is_tried_when_the_first_does_not_exist(state, monkeypatch):
+    checked = _google(monkeypatch, {"maria.lopez@panaderiaejemplo.test"})
+    result = await find_email("María", "García", "panaderiaejemplo.test", env=Env(reoon="k"),
+                              state=state, alt_last_names=["López"])
+    assert (result.email, result.status) == ("maria.lopez@panaderiaejemplo.test", "verified")
+    assert checked == ["maria.garcia@panaderiaejemplo.test", "maria.lopez@panaderiaejemplo.test"]
+
+
+@pytest.mark.asyncio
+async def test_other_surname_costs_nothing_when_the_first_exists(state, monkeypatch):
+    checked = _google(monkeypatch, {"maria.garcia@panaderiaejemplo.test"})
+    result = await find_email("María", "García", "panaderiaejemplo.test", env=Env(reoon="k"),
+                              state=state, alt_last_names=["López"])
+    assert result.email == "maria.garcia@panaderiaejemplo.test" and result.verified
+    assert checked == ["maria.garcia@panaderiaejemplo.test"]
+
+
+@pytest.mark.asyncio
+async def test_both_surnames_missing_stays_invalid(state, monkeypatch):
+    checked = _google(monkeypatch, set())
+    result = await find_email("María", "García", "panaderiaejemplo.test", env=Env(reoon="k"),
+                              state=state, alt_last_names=["López"])
+    assert (result.email, result.status) == ("maria.garcia@panaderiaejemplo.test", "invalid")
+    assert len(checked) == 2
+
+
+def test_accented_names_are_folded_not_dropped():
+    assert build_email("{f}.{l}", "María", "Núñez", "acme.com") == "maria.nunez@acme.com"
+    assert infer_pattern_from_email("jose.pena@acme.com", "José", "Peña") == "{f}.{l}"

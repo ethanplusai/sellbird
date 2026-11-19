@@ -28,6 +28,15 @@ FINGERPRINTS: dict[str, list[str]] = {
     "Next.js": [r"/_next/static/"],
     "Gatsby": [r"/page-data/app-data\.json", r"id=\"___gatsby\""],
 
+    # Online stores: a business that already sells online has a catalog.
+    "WooCommerce": [r"wp-content/plugins/woocommerce/", r"woocommerce-(?:page|cart|js|no-js)"],
+    "PrestaShop": [r'<meta name="generator" content="PrestaShop', r"\bvar prestashop\s*="],
+    "Magento": [r"\bMagento_[A-Z]\w+/", r"mage/cookies"],
+    "VTEX": [r"vteximg\.com\.br", r"vtexassets\.com"],
+    "Tiendanube": [r"mitiendanube\.com", r"d26lpennugtm8s\.cloudfront\.net"],
+    "Jumpseller": [r"(?:assets|cdnx)\.jumpseller\.com"],
+    "BigCommerce": [r"cdn\d*\.bigcommerce\.com"],
+
     # Analytics / tracking
     "Google Analytics": [r"googletagmanager\.com/gtag", r"google-analytics\.com/analytics\.js"],
     "Google Tag Manager": [r"googletagmanager\.com/gtm\.js"],

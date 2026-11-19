@@ -427,3 +427,69 @@ async def test_scout_search_web_uses_tinyfish_backend():
     assert called == [("tinyfish", "Denver roofers", "tf_key")]
     assert len(results) == 1
     assert results[0][0] == "https://summit.example"
+
+
+@pytest.mark.asyncio
+async def test_spanish_contact_page_and_mailbox_are_found(no_network):
+    pages = {
+        "https://panaderiaejemplo.test": '<html lang="es"><a href="/">Inicio</a></html>',
+        "https://panaderiaejemplo.test/contacto":
+            '<a href="mailto:ventas@panaderiaejemplo.test">Escríbanos</a>',
+    }
+    scout = site_scout(pages)
+    assert await scout._find_inbox_address("panaderiaejemplo.test") == "ventas@panaderiaejemplo.test"
+
+
+@pytest.mark.asyncio
+async def test_english_site_does_not_spend_fetches_on_spanish_paths(no_network):
+    pages = {"https://roofexample.test": "<html lang=\"en\"><p>We fix roofs.</p></html>"}
+    scout = site_scout(pages)
+    await scout._find_inbox_address("roofexample.test")
+    assert not any(u.endswith(("/contacto", "/contactenos", "/contactanos")) for u in scout.fetched)
+
+
+@pytest.mark.asyncio
+async def test_free_mail_published_on_the_business_site_is_used(no_network):
+    pages = {"https://barberiaejemplo.test":
+             '<html lang="es"><a href="mailto:barberiaejemplo@gmail.com">Correo</a></html>'}
+    scout = site_scout(pages)
+    assert await scout._find_inbox_address("barberiaejemplo.test") == "barberiaejemplo@gmail.com"
+
+
+@pytest.mark.asyncio
+async def test_own_domain_inbox_beats_free_mail(no_network):
+    pages = {"https://tiendaejemplo.test":
+             '<a href="mailto:tienda.ejemplo@gmail.com">a</a>'
+             '<a href="mailto:info@tiendaejemplo.test">b</a>'}
+    scout = site_scout(pages)
+    assert await scout._find_inbox_address("tiendaejemplo.test") == "info@tiendaejemplo.test"
+
+
+@pytest.mark.asyncio
+async def test_several_personal_free_mail_addresses_are_not_used(no_network):
+    pages = {"https://salonejemplo.test":
+             '<a href="mailto:ana.ejemplo@gmail.com">Ana</a>'
+             '<a href="mailto:pedro.ejemplo@hotmail.com">Pedro</a>'}
+    scout = site_scout(pages)
+    assert await scout._find_inbox_address("salonejemplo.test") == ""
+
+
+@pytest.mark.asyncio
+async def test_spanish_site_uses_the_paternal_surname(no_network):
+    pages = {"https://panaderiaejemplo.test":
+             '<html lang="es"><h3>María José García López</h3><p>Dueña</p>'
+             '<h3>José Ramírez Soto</h3><p>Gerente de Ventas</p></html>'}
+    scout = site_scout(pages)
+    found = {m["full_name"]: m for m in await scout._scrape_team_page("panaderiaejemplo.test")}
+    assert found["María José García López"]["last_name"] == "García"
+    assert found["María José García López"]["alt_last_names"] == ["López"]
+    assert found["José Ramírez Soto"]["last_name"] == "Ramírez"
+
+
+@pytest.mark.asyncio
+async def test_english_site_keeps_the_last_word_as_surname(no_network):
+    pages = {"https://pryordental.test":
+             '<html lang="en"><h3>Maren Hollis Pryor</h3><p>Owner</p></html>'}
+    scout = site_scout(pages)
+    member, = await scout._scrape_team_page("pryordental.test")
+    assert member["last_name"] == "Pryor" and "alt_last_names" not in member
