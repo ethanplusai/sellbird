@@ -447,6 +447,59 @@ def _dfs_location(query: "DiscoveryQuery", point_suffix: str) -> dict:
     return {"location_code": DEFAULT_LOCATION_CODE}
 
 
+# The search language follows the country named in the place, so "Juwelier
+# Dortmund, Deutschland" is searched the way someone in Dortmund searches it.
+# Full country names only: a two-letter tail is ambiguous ("Dover, DE" is
+# Delaware). Anything else stays English, as before.
+COUNTRY_LANGUAGES = {
+    "germany": "de", "deutschland": "de", "austria": "de", "österreich": "de",
+    "osterreich": "de", "switzerland": "de", "schweiz": "de", "liechtenstein": "de",
+    "france": "fr", "belgium": "fr", "belgique": "fr", "luxembourg": "fr",
+    "spain": "es", "españa": "es", "espana": "es", "mexico": "es", "méxico": "es",
+    "argentina": "es", "colombia": "es", "chile": "es",
+    "italy": "it", "italia": "it",
+    "netherlands": "nl", "nederland": "nl",
+    "portugal": "pt", "brazil": "pt", "brasil": "pt",
+    "poland": "pl", "polska": "pl",
+    "sweden": "sv", "sverige": "sv", "denmark": "da", "danmark": "da",
+    "norway": "no", "norge": "no", "finland": "fi", "suomi": "fi",
+}
+
+
+def dataforseo_language(query: "DiscoveryQuery") -> str:
+    """The language_code for a DataForSEO SERP task: the country's, else English."""
+    parts = [p.strip().lower() for p in (query.location or "").split(",") if p.strip()]
+    return COUNTRY_LANGUAGES.get(parts[-1], "en") if len(parts) > 1 else "en"
+
+
+# Google now links organic results through its own redirect
+# (google.com/goto?url=...) and local-pack entries to a Google viewer, so
+# `domain` and `url` name Google, not the business. A Google host is never
+# the business; the result's real host is still in `breadcrumb`.
+_GOOGLE_HOST_RE = re.compile(r"^(?:[a-z0-9-]+\.)*google\.[a-z.]+$")
+
+
+def _is_google_host(domain: str) -> bool:
+    return bool(_GOOGLE_HOST_RE.match(domain or ""))
+
+
+def serp_target(item: dict) -> tuple[str, str]:
+    """(domain, website) a DataForSEO SERP item points to; ("", "") if unknown."""
+    url = item.get("url") or ""
+    domain = normalize_domain(item.get("domain") or url)
+    if domain and not _is_google_host(domain):
+        return domain, url
+    crumb = (item.get("breadcrumb") or "").split("›")[0].strip()
+    if "." not in crumb or " " in crumb:
+        return "", ""
+    parsed = urlparse(crumb if "://" in crumb else "https://" + crumb)
+    host = normalize_domain(parsed.hostname or "")
+    if not host or _is_google_host(host) or parsed.scheme not in ("http", "https"):
+        return "", ""
+    # Only the site is known, not the page: the homepage stands in for it.
+    return host, f"{parsed.scheme}://{parsed.hostname}/"
+
+
 # ── Provider adapters ─────────────────────────────────────────────────
 
 
@@ -671,7 +724,7 @@ class DataForSEOSerp(DiscoveryProvider):
     async def fetch(self, client, env, query):
         keyword = query.keyword()
         items = await self._post(client, env, "serp/google/organic/live/advanced", {
-            "keyword": keyword, "language_code": "en", "depth": query.depth,
+            "keyword": keyword, "language_code": dataforseo_language(query), "depth": query.depth,
             "device": "desktop", **_dfs_location(query, self.POINT_RADIUS)})
 
         # One Business per identity: a company in the pack AND at organic 14
@@ -680,21 +733,21 @@ class DataForSEOSerp(DiscoveryProvider):
         for item in items:
             kind = item.get("type")
             if kind == "organic":
-                domain = normalize_domain(item.get("domain") or item.get("url") or "")
+                domain, website = serp_target(item)
                 if not domain:
                     continue
                 biz = found.setdefault(domain, Business(
                     name=business_name(item.get("title") or "", domain),
                     raw_title=item.get("title") or "",
-                    domain=domain, website=item.get("url") or "",
+                    domain=domain, website=website,
                     location=query.location, has_website=True,
-                    source_url=item.get("url") or "",
+                    source_url=website,
                     provider=self.key, keyword=keyword))
                 # rank_group is position within organic results.
                 # `position` in this payload means left/right column, NOT rank.
                 biz.rank = _best(biz.rank, item.get("rank_group"))
             elif kind == "local_pack" and not item.get("is_paid"):
-                domain = normalize_domain(item.get("domain") or item.get("url") or "")
+                domain, website = serp_target(item)
                 cid = item.get("cid") or ""
                 ident = domain or (f"dataforseo:cid:{cid}" if cid else "")
                 if not ident:
@@ -704,13 +757,13 @@ class DataForSEOSerp(DiscoveryProvider):
                 if biz is None:
                     biz = found[ident] = Business(
                         name=item.get("title") or "", raw_title=item.get("title") or "",
-                        domain=domain, website=item.get("url") or "",
+                        domain=domain, website=website,
                         location=query.location,
                         # No website button in the pack is not proof there
                         # is no website, so this stays unknown.
                         has_website=True if domain else None,
                         external_id="" if domain else ident,
-                        source_url=item.get("url") or "",
+                        source_url=website,
                         provider=self.key, keyword=keyword)
                 biz.phone = biz.phone or item.get("phone") or ""
                 if rating.get("value") is not None:
@@ -751,8 +804,8 @@ class DataForSEOMaps(DataForSEOSerp):
     async def fetch(self, client, env, query):
         keyword = query.keyword()
         items = await self._post(client, env, "serp/google/maps/live/advanced", {
-            "keyword": keyword, "language_code": "en", "depth": query.depth,
-            **_dfs_location(query, self.ZOOM)})
+            "keyword": keyword, "language_code": dataforseo_language(query),
+            "depth": query.depth, **_dfs_location(query, self.ZOOM)})
         out = []
         for item in items:
             # maps_paid_item is an ad; only organic map results have a rank.
