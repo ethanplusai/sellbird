@@ -1199,6 +1199,44 @@ async def test_osm_maps_the_trades_it_does_know():
 
 
 @pytest.mark.asyncio
+async def test_osm_maps_care_homes_but_not_home_care_agencies():
+    provider = D.OpenStreetMap()
+    care_home = ["social_facility=nursing_home",
+                 "social_facility=assisted_living", "amenity=nursing_home"]
+    assert provider._tags("care home") == care_home
+    assert provider._tags("residential care home") == care_home
+    assert provider._tags("nursing home") == ["social_facility=nursing_home",
+                                              "amenity=nursing_home"]
+    assert provider._tags("supported living provider") == [
+        "social_facility=group_home", "social_facility=assisted_living"]
+    # Domiciliary agencies are offices OSM barely maps: refuse, don't guess.
+    assert provider._tags("home care agency") == []
+    assert provider._tags("domiciliary care agency") == []
+
+
+@pytest.mark.asyncio
+async def test_osm_care_home_query_and_category():
+    seen = {}
+
+    def handler(request):
+        seen["body"] = request.content.decode()
+        return httpx.Response(200, json={"elements": [{
+            "type": "node", "id": 7,
+            "tags": {"name": "Oakfield House", "amenity": "social_facility",
+                     "social_facility": "nursing_home",
+                     "website": "https://oakfieldhouse.example"}}]})
+
+    provider = D.OpenStreetMap()
+    async with _client(handler) as client:
+        found = await provider.fetch(client, {}, D.DiscoveryQuery(
+            term="care home", coordinate="53.48,-2.24,15"))
+    assert "node[social_facility=nursing_home](around:15000,53.48,-2.24);" in seen["body"]
+    assert "way[amenity=nursing_home](around:15000,53.48,-2.24);" in seen["body"]
+    assert [(b.name, b.category, b.domain) for b in found] == [
+        ("Oakfield House", "nursing_home", "oakfieldhouse.example")]
+
+
+@pytest.mark.asyncio
 async def test_an_unmappable_term_is_reported_not_silently_skipped(
         state, config, register, monkeypatch):
     """The run must surface why a query produced nothing."""

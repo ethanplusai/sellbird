@@ -519,6 +519,12 @@ MIGRATIONS: list[str] = [
     -- knows about the recipient. Empty until then.
     ALTER TABLE prospects ADD COLUMN timezone TEXT DEFAULT '';
     """,
+    # ── v15: when Harvey last searched for a company's missing website ──
+    """
+    -- Set on every attempt, found or not, so the website finder rotates
+    -- through the whole no-website backlog instead of retrying the top rows.
+    ALTER TABLE companies ADD COLUMN website_checked_at TIMESTAMP DEFAULT NULL;
+    """,
 ]
 
 BRAIN_PROVIDERS = ("claude", "codex")
@@ -1908,6 +1914,70 @@ class StateManager:
             ) as cursor:
                 row = await cursor.fetchone()
                 return row[0] if row else 0
+
+    # ── Website finder: companies stored without a website ──
+
+    _NEEDS_WEBSITE = """c.domain = '' AND TRIM(c.name) != ''
+                     AND (c.website_checked_at IS NULL
+                          OR c.website_checked_at < datetime('now', ?))"""
+
+    async def companies_needing_website(
+        self, limit: int = 10, retry_days: int = 60
+    ) -> list[dict]:
+        """Companies with no domain that the website finder should try next,
+        never-tried first, then the longest-ago tries."""
+        async with self._connect() as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                f"""SELECT c.id, c.name, c.external_id, c.location, c.phone
+                   FROM companies c WHERE {self._NEEDS_WEBSITE}
+                   ORDER BY c.website_checked_at IS NOT NULL, c.website_checked_at,
+                            c.created_at
+                   LIMIT ?""",
+                (f"-{int(retry_days)} days", int(limit)),
+            ) as cursor:
+                return [dict(r) for r in await cursor.fetchall()]
+
+    async def count_companies_needing_website(self, retry_days: int = 60) -> int:
+        async with self._connect() as db:
+            async with db.execute(
+                f"SELECT COUNT(*) FROM companies c WHERE {self._NEEDS_WEBSITE}",
+                (f"-{int(retry_days)} days",),
+            ) as cursor:
+                row = await cursor.fetchone()
+                return row[0] if row else 0
+
+    async def mark_company_website_checked(self, company_id: str):
+        async with self._connect() as db:
+            await db.execute(
+                "UPDATE companies SET website_checked_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (company_id,),
+            )
+            await db.commit()
+
+    async def set_company_website(self, company_id: str, domain: str, website: str) -> str:
+        """Give a company with no domain its website. Returns 'saved',
+        'taken' (another company already has that domain) or 'unchanged'
+        (it got a domain some other way meanwhile)."""
+        domain = _norm(domain)
+        if not domain:
+            return "unchanged"
+        async with self._connect() as db:
+            async with db.execute(
+                "SELECT 1 FROM companies WHERE domain = ? AND id != ?", (domain, company_id)
+            ) as cursor:
+                if await cursor.fetchone():
+                    return "taken"
+            try:
+                cursor = await db.execute(
+                    "UPDATE companies SET domain = ?, website = ?, "
+                    "updated_at = CURRENT_TIMESTAMP WHERE id = ? AND domain = ''",
+                    (domain, website or f"https://{domain}", company_id),
+                )
+                await db.commit()
+            except aiosqlite.IntegrityError:
+                return "taken"
+            return "saved" if cursor.rowcount else "unchanged"
 
     async def mark_company_profiled(self, company_id: str):
         """Record that a profile pass looked at this company, whether or

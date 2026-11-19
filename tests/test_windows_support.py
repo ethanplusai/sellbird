@@ -26,7 +26,8 @@ def _text_io_without_encoding(tree):
         if name not in ("open", "read_text", "write_text"):
             continue
         if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name) and \
-                func.value.id in ("os", "webbrowser", "aiosqlite", "sqlite3"):
+                func.value.id in ("os", "webbrowser", "aiosqlite", "sqlite3", "z"):
+            # z: a zipfile.ZipFile, whose open() is always binary.
             continue
         if any(k.arg == "encoding" for k in node.keywords):
             continue

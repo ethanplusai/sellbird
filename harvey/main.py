@@ -8,6 +8,7 @@ from datetime import datetime, time, timedelta
 
 import pytz
 
+from harvey.edits import has_pending_edits, learn_from_edits
 from harvey.brain import Brain
 from harvey.sending_mode import sync_sending_mode
 from harvey.config import (
@@ -18,7 +19,7 @@ from harvey.integrations.mail_provider import NATIVE_PROVIDERS
 from harvey.pidfile import (
     LOCK_FILE, hold_loop_lock, read_pid, release_loop_lock, remove_pid_file, write_pid_file,
 )
-from harvey.pipeline import run_profile_stage
+from harvey.pipeline import run_profile_stage, run_website_stage
 from harvey.state import StateManager
 
 logging.basicConfig(
@@ -27,6 +28,9 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 logger = logging.getLogger("harvey")
+# httpx logs every request URL at INFO, and some APIs (Reoon, Hunter) take
+# their key in the query string, so INFO would print the key to the console.
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 # Backoff for consecutive failed cycles: 60s, 120s, 240s, ... capped at 15 min
 ERROR_BACKOFF_BASE = 60
@@ -193,27 +197,39 @@ async def _run_agents(tasks: list) -> dict:
     and the whole batch is bounded so one HUNG agent (no exception, just
     never returns) can't either. A task's outcome is what it returned, or
     the exception it raised; a task cut off by the bound has no outcome.
+    Agents that finished before the bound keep their outcome: a slow profile
+    must not erase the reply check that already completed, or sending is
+    held for no reason.
     """
     if not tasks:
         return {}
     if len(tasks) > 1:
         logger.info(f"Running {len(tasks)} agents in parallel: {[t[0] for t in tasks]}")
+    running = {asyncio.ensure_future(coro): name for name, coro in tasks}
     try:
-        results = await asyncio.wait_for(
-            asyncio.gather(*[t[1] for t in tasks], return_exceptions=True),
-            timeout=CYCLE_TIMEOUT_SECONDS,
-        )
-    except asyncio.TimeoutError:
+        done, pending = await asyncio.wait(running, timeout=CYCLE_TIMEOUT_SECONDS)
+    except asyncio.CancelledError:
+        for task in running:
+            task.cancel()
+        await asyncio.gather(*running, return_exceptions=True)
+        raise
+    if pending:
         logger.error(
             f"Cycle timed out after {CYCLE_TIMEOUT_SECONDS}s with "
-            f"{[t[0] for t in tasks]} still running — cancelled, "
+            f"{sorted(running[t] for t in pending)} still running — cancelled, "
             "moving on to the next heartbeat instead of hanging forever."
         )
-        results = []
+        for task in pending:
+            task.cancel()
+        await asyncio.gather(*pending, return_exceptions=True)
     outcomes = {}
-    for (name, _), result in zip(tasks, results):
-        if isinstance(result, asyncio.CancelledError):
-            raise result
+    for name, _ in tasks:
+        task = next(t for t, n in running.items() if n == name)
+        if task not in done:
+            continue
+        if task.cancelled():
+            raise asyncio.CancelledError()
+        result = task.exception() or task.result()
         if isinstance(result, Exception):
             logger.error(f"Agent {name} failed: {result}", exc_info=result)
         outcomes[name] = result
@@ -417,12 +433,23 @@ async def heartbeat(stop_event: asyncio.Event | None = None):
             if sender.is_native or has_open_convos:
                 tasks.append(("handle_replies", handler.run()))
 
+            # New Outbox edits become writing rules (skills/learned_rules.md)
+            # before the next drafts are written. One model call, and only
+            # when the owner has edited something since the last cycle.
+            if not send_only and await has_pending_edits(state):
+                tasks.append(("learn_edits", learn_from_edits(state, brain)))
+
             # Profiling rides along every cycle. It is three HTTP requests per
             # business with no model call, so it costs nothing against the
             # Claude budget the rest of this loop is rationing — and it is what
             # turns a name and a domain into something worth writing about.
             if summary.get("unprofiled", 0):
                 tasks.append(("profile", run_profile_stage(state, limit=25, config=config)))
+            # Companies a register listed without a website get one web search
+            # each, a small batch a cycle, so the scout can find their people.
+            # It does nothing (one log line) until a search key is set.
+            if not send_only and config.website_finder.enabled:
+                tasks.append(("find_websites", run_website_stage(state, config)))
 
             outcomes = await _run_agents(tasks)
 

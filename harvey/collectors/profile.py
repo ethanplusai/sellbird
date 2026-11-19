@@ -1335,6 +1335,12 @@ async def profile_companies(state, companies: list[dict], config=None) -> tuple[
             n = await collector.run(companies, run_id=run_id)
         await state.finish_run(run_id, records=n, cost_usd=0.0)
         return n, run_id
+    except asyncio.CancelledError:
+        # The heartbeat's cycle timeout cancels us: close the run so the
+        # dashboard doesn't report a job that stopped before finishing.
+        await asyncio.shield(state.finish_run(
+            run_id, status="stale", error="cancelled by the cycle time limit"))
+        raise
     except Exception as e:
         await state.finish_run(run_id, status="failed", error=str(e))
         raise
