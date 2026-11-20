@@ -153,8 +153,12 @@ function formatDate(d) {
     if (/^\d{4}-\d\d-\d\dT/.test(t) && !/[zZ]$|[+-]\d\d:?\d\d$/.test(t)) t += 'Z';  // stored UTC
     const dt = new Date(t);
     if (isNaN(dt)) return escHtml(d);
-    return dt.toLocaleString('en-US', {month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});
+    return dt.toLocaleString(displayLocale(), {month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});
   } catch { return escHtml(d); }
+}
+
+function displayLocale() {
+  return typeof dashboardLocale === 'function' ? dashboardLocale() : 'en-US';
 }
 
 // ── Small render helpers ──
@@ -184,15 +188,16 @@ function relTime(d) {
   const dt = parseTs(d);
   if (isNaN(dt)) return escHtml(d);
   const mins = Math.round((Date.now() - dt) / 60000);
-  if (mins < -1 && mins > -60) return 'in ' + -mins + 'm';
-  if (mins < -1 && mins > -60 * 24) return 'in ' + Math.round(-mins / 60) + 'h';
-  if (mins >= -1 && mins < 1) return 'just now';
-  if (mins >= 1 && mins < 60) return mins + 'm ago';
-  if (mins >= 60 && mins < 60 * 24) return Math.round(mins / 60) + 'h ago';
+  const pt = displayLocale() === 'pt-BR';
+  if (mins < -1 && mins > -60) return pt ? 'em ' + -mins + ' min' : 'in ' + -mins + 'm';
+  if (mins < -1 && mins > -60 * 24) return pt ? 'em ' + Math.round(-mins / 60) + ' h' : 'in ' + Math.round(-mins / 60) + 'h';
+  if (mins >= -1 && mins < 1) return pt ? 'agora' : 'just now';
+  if (mins >= 1 && mins < 60) return pt ? 'há ' + mins + ' min' : mins + 'm ago';
+  if (mins >= 60 && mins < 60 * 24) return pt ? 'há ' + Math.round(mins / 60) + ' h' : Math.round(mins / 60) + 'h ago';
   if (mins >= 60 * 24 && mins < 60 * 48) return 'Yesterday';
   const opts = {month: 'short', day: 'numeric'};
   if (dt.getFullYear() !== new Date().getFullYear()) opts.year = 'numeric';
-  return dt.toLocaleDateString('en-US', opts);
+  return dt.toLocaleDateString(displayLocale(), opts);
 }
 
 function dayLabel(d) {
@@ -203,12 +208,12 @@ function dayLabel(d) {
   const diff = Math.round((today - that) / 86400000);
   if (diff === 0) return 'Today';
   if (diff === 1) return 'Yesterday';
-  return dt.toLocaleDateString('en-US', {weekday: 'long', month: 'short', day: 'numeric'});
+  return dt.toLocaleDateString(displayLocale(), {weekday: 'long', month: 'short', day: 'numeric'});
 }
 
 function timeOfDay(d) {
   const dt = parseTs(d);
-  return isNaN(dt) ? '' : dt.toLocaleTimeString('en-US', {hour: 'numeric', minute: '2-digit'});
+  return isNaN(dt) ? '' : dt.toLocaleTimeString(displayLocale(), {hour: 'numeric', minute: '2-digit'});
 }
 
 // Columns of a tiny bar chart; the last day is "today".
