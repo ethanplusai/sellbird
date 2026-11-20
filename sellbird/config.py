@@ -481,6 +481,8 @@ HEBREW_OPT_OUT_WORDS = ("הסר", "הסירו", "הסרה", "לא תודה", "ה
 SPANISH_OPT_OUT_WORDS = ("no gracias", "baja", "darme de baja")
 FRENCH_OPT_OUT_WORDS = ("non merci", "non, merci", "arrêt", "désabonner", "désabonnement",
                         "désabonnez-moi", "retirez-moi")
+GERMAN_OPT_OUT_WORDS = ("nein danke", "nein, danke", "stopp", "abmelden", "austragen",
+                        "kein interesse")
 # Wording that tells people the emails can stop, in any phrasing. An
 # opt_out_line must say so somehow: one that reads like a sign-off ("Cheers!")
 # gives nobody a way out, which is worse than leaving the line off on purpose.
@@ -524,6 +526,18 @@ _SAYS_IT_STOPS_FR_RE = re.compile(
     re.IGNORECASE)
 # "Click" in French: "cliquez ici pour vous désabonner".
 _FRENCH_CLICK_RE = re.compile(r"\bcliqu(?:ez|er|e)\b", re.IGNORECASE)
+# German, matched with umlauts removed: "Kein Interesse? Eine kurze Antwort
+# genügt, dann melde ich mich nicht mehr", "Antworten Sie mit STOPP".
+_SAYS_IT_STOPS_DE_RE = re.compile(
+    r"(?:\bstopp?\b|abmeld|abzumelden|austrag|\btrage\s+(?:ich\s+)?(?:sie|dich|euch)\s+aus\b"
+    r"|\bnein,?\s+danke\b|\bkein(?:e|en)?\s+(?:weiteren?\s+)?(?:e-?mails?|mails|nachrichten)\b"
+    r"|\bkein\s+interesse|\bnicht\s+interessiert"
+    r"|\b(?:melde|schreibe|kontaktiere|maile)\s+(?:ich\s+)?(?:mich\s+)?(?:ihnen\s+|dir\s+|euch\s+)?"
+    r"nicht\s+mehr\b"
+    r"|\bnicht\s+mehr\s+(?:\w+\s+){0,2}?(?:schreib|meld|kontaktier|anschreib|mail)\w*)",
+    re.IGNORECASE)
+# "Click" in German: "klicken Sie hier, um sich abzumelden".
+_GERMAN_CLICK_RE = re.compile(r"\bklick", re.IGNORECASE)
 
 
 def _fold_accents(text: str) -> str:
@@ -597,14 +611,15 @@ class ComplianceConfig(BaseModel):
             return v
         folded = _fold_accents(v)
         if (any(bit in lowered for bit in ("http", "www.", "click", "@"))
-                or _HEBREW_CLICK_RE.search(v) or _FRENCH_CLICK_RE.search(folded)):
+                or _HEBREW_CLICK_RE.search(v) or _FRENCH_CLICK_RE.search(folded)
+                or _GERMAN_CLICK_RE.search(folded)):
             raise ValueError(
                 "opt_out_line can't contain a link or an email address: cold email "
                 "allows one link, and opting out must be as simple as replying."
             )
         if not (_SAYS_IT_STOPS_RE.search(v) or _SAYS_IT_STOPS_HE_RE.search(v)
                 or _SAYS_IT_STOPS_ES_RE.search(v) or _SAYS_IT_STOPS_IT_RE.search(v)
-                or _SAYS_IT_STOPS_FR_RE.search(folded)):
+                or _SAYS_IT_STOPS_FR_RE.search(folded) or _SAYS_IT_STOPS_DE_RE.search(folded)):
             raise ValueError(
                 "opt_out_line doesn't tell people they can stop these emails. Say so in "
                 "any words (\"Not interested? Just let me know and I won't email you "
