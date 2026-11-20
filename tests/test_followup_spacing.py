@@ -216,10 +216,40 @@ async def test_follow_up_delay_days_also_decides_when_a_follow_up_may_go(state, 
     assert sender.provider.sent == []
 
 
+@pytest.mark.asyncio
+async def test_by_default_every_drafted_follow_up_is_staged(state):
+    # The Writer can keep up to five steps; no cap unless the operator sets one.
+    from sellbird.models.campaign import Campaign, EmailStep
+    pid = await seed_prospect(state)
+    steps = [EmailStep(step=1, subject="hi {{first_name}}", body="One for {{company}}. Question?",
+                       delay_days=0)]
+    steps += [EmailStep(step=n, subject=f"s{n}", body=f"Step {n}.", delay_days=3) for n in (2, 3, 4)]
+    campaign = Campaign(id="", name="four-steps", channel="email", prospect_ids=[pid],
+                        status="draft", sequence=steps)
+    campaign.id = await state.add_campaign(campaign)
+    await make_sender(state, FakeProvider())._run_native()
+    assert sorted(i["step"] for i in await state.get_outbox(status="pending_review")) == [1, 2, 3, 4]
+
+
+@pytest.mark.asyncio
+async def test_follow_up_delay_days_holds_when_the_campaign_is_gone(state, monkeypatch):
+    # Without the campaign the planned gap is all there is; a longer wait set
+    # since then still holds.
+    pid = await seed_prospect(state, status="contacted")
+    one = await _sequence(state, pid, 1, "approved", _now() - timedelta(days=10), campaign="gone")
+    await _sent(state, one, _now() - timedelta(days=4))
+    await _sequence(state, pid, 2, "approved", _now() - timedelta(days=7), campaign="gone")
+    sender = make_sender(state, FakeProvider())
+    monkeypatch.setattr(sender.config.channels.email, "follow_up_delay_days", 8, raising=False)
+    await sender._drain_due()
+    assert sender.provider.sent == []
+
+
 def test_follow_up_settings_are_checked():
     from pydantic import ValidationError
     from sellbird.config import EmailChannelConfig
-    assert EmailChannelConfig().max_follow_ups == 2
+    assert EmailChannelConfig().max_follow_ups is None
+    assert EmailChannelConfig(max_follow_ups=1).max_follow_ups == 1
     assert EmailChannelConfig().follow_up_delay_days == 0
     for bad in ({"max_follow_ups": 3}, {"max_follow_ups": -1}, {"follow_up_delay_days": -2},
                 {"follow_up_delay_days": 61}):

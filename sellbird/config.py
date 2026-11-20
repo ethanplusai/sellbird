@@ -293,13 +293,14 @@ class EmailChannelConfig(BaseModel):
     # 3) are not prepared, so none can go out to someone who never answered;
     # a reply is still read and answered as usual. Gmail/Microsoft/SMTP only.
     follow_ups: bool = True
-    # How many follow-ups a campaign stages, 0-2. The Writer still drafts all
-    # three emails; with 1, only the first reminder is prepared (where one
+    # How many follow-ups a campaign stages, 0-2; unset = every follow-up the
+    # Writer drafted. With 1, only the first reminder is prepared (where one
     # reminder is the polite limit). follow_ups: false still means none.
-    max_follow_ups: int = 2
+    # Gmail/Microsoft/SMTP only: Instantly gets the whole sequence.
+    max_follow_ups: int | None = None
     # Days to wait before each follow-up, 1-60. 0 = the spacing the Writer
     # planned (3, then 4 days). Holds both when a follow-up is planned and when
-    # it may actually go.
+    # it may actually go. Gmail/Microsoft/SMTP only.
     follow_up_delay_days: int = 0
     # New domain? Ramp cold email up slowly (see WarmupConfig). Native
     # providers only: Instantly has its own warmup and per-account limits.
@@ -337,8 +338,8 @@ class EmailChannelConfig(BaseModel):
 
     @field_validator("max_follow_ups")
     @classmethod
-    def _follow_up_count_range(cls, v: int) -> int:
-        if not 0 <= v <= 2:
+    def _follow_up_count_range(cls, v: int | None) -> int | None:
+        if v is not None and not 0 <= v <= 2:
             raise ValueError("max_follow_ups must be 0, 1 or 2")
         return v
 

@@ -321,7 +321,8 @@ class Sender:
         email = self.config.channels.email
         if not getattr(email, "follow_ups", True):
             return False
-        return step - 1 <= int(getattr(email, "max_follow_ups", 2))
+        most = getattr(email, "max_follow_ups", None)
+        return most is None or step - 1 <= int(most)
 
     def _follow_up_days(self, planned: int) -> int:
         """The wait before a follow-up: channels.email.follow_up_delay_days when
@@ -806,6 +807,8 @@ class Sender:
         if delay is None:  # campaign unknown: fall back to the planned spacing
             planned, prev_planned = _at(item["send_at"]), _at(prev["send_at"])
             gap = (planned - prev_planned) if planned and prev_planned else MIN_FOLLOW_UP_GAP
+            # A longer wait set after staging still holds.
+            gap = max(gap, timedelta(days=self._follow_up_days(0)))
         else:
             gap = timedelta(days=delay)
         ready_at = sent_at + max(MIN_FOLLOW_UP_GAP, gap)

@@ -17,8 +17,8 @@ minor versions can still change behaviour.
   kein Interesse besteht" or "kein Interesse an SEO, aber ..." are not.
 - **`channels.email.max_follow_ups` and `follow_up_delay_days`.** Stage only
   one reminder (or none) and choose the days before each follow-up; the wait
-  holds when a follow-up is planned and when it may go. Defaults keep today's
-  three emails and spacing.
+  holds when a follow-up is planned and when it may go. Unset, nothing changes.
+  Gmail, Microsoft and SMTP only; Instantly gets the whole sequence.
 - **A whole top-level domain on `compliance.do_not_contact`.** `.at` (or `*.at`)
   keeps every address under it out of sending, discovery, export and the
   register, for countries where cold email needs consent between businesses too.
