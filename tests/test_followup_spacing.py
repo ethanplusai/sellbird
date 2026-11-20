@@ -159,3 +159,69 @@ async def test_follow_ups_are_staged_unless_turned_off(state):
     await make_sender(state, FakeProvider())._run_native()
     steps = sorted(i["step"] for i in await state.get_outbox(status="pending_review"))
     assert steps == [1, 2]
+
+
+async def _three_step_campaign(state, pid):
+    from sellbird.models.campaign import Campaign, EmailStep
+    campaign = Campaign(
+        id="", name="three-steps", channel="email", prospect_ids=[pid], status="draft",
+        sequence=[EmailStep(step=1, subject="hi {{first_name}}", body="One for {{company}}. Question?",
+                            delay_days=0),
+                  EmailStep(step=2, subject="follow", body="Two.", delay_days=3),
+                  EmailStep(step=3, subject="last", body="Three.", delay_days=4)])
+    campaign.id = await state.add_campaign(campaign)
+    return campaign
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("most, staged", [(0, [1]), (1, [1, 2]), (2, [1, 2, 3])])
+async def test_max_follow_ups_caps_how_many_follow_ups_are_staged(state, monkeypatch, most, staged):
+    # In some markets one reminder is the polite limit; the Writer still drafts
+    # all three, the Sender stages only as many follow-ups as allowed.
+    pid = await seed_prospect(state)
+    await _three_step_campaign(state, pid)
+    sender = make_sender(state, FakeProvider())
+    monkeypatch.setattr(sender.config.channels.email, "max_follow_ups", most, raising=False)
+    await sender._run_native()
+    assert sorted(i["step"] for i in await state.get_outbox(status="pending_review")) == staged
+
+
+@pytest.mark.asyncio
+async def test_follow_up_delay_days_sets_when_a_follow_up_is_planned(state, monkeypatch):
+    pid = await seed_prospect(state)
+    await _three_step_campaign(state, pid)
+    sender = make_sender(state, FakeProvider())
+    monkeypatch.setattr(sender.config.channels.email, "follow_up_delay_days", 8, raising=False)
+    monkeypatch.setattr(sender.config.channels.email, "max_follow_ups", 1, raising=False)
+    await sender._run_native()
+    rows = {i["step"]: datetime.fromisoformat(i["send_at"])
+            for i in await state.get_outbox(status="pending_review")}
+    assert sorted(rows) == [1, 2]
+    assert rows[2] - rows[1] >= timedelta(days=8) - timedelta(minutes=1)
+
+
+@pytest.mark.asyncio
+async def test_follow_up_delay_days_also_decides_when_a_follow_up_may_go(state, monkeypatch):
+    # The campaign says 3 days; the operator's 8 must hold when it is sent too,
+    # not only when it was planned.
+    pid = await seed_prospect(state, status="contacted")
+    await seed_campaign(state, [pid])  # step 2 delay_days=3
+    campaign = (await state.get_campaigns_by_status("draft"))[0]
+    one = await _sequence(state, pid, 1, "approved", _now() - timedelta(days=20), campaign=campaign.id)
+    await _sent(state, one, _now() - timedelta(days=4))
+    await _sequence(state, pid, 2, "approved", _now() - timedelta(minutes=5), campaign=campaign.id)
+    sender = make_sender(state, FakeProvider())
+    monkeypatch.setattr(sender.config.channels.email, "follow_up_delay_days", 8, raising=False)
+    await sender._drain_due()
+    assert sender.provider.sent == []
+
+
+def test_follow_up_settings_are_checked():
+    from pydantic import ValidationError
+    from sellbird.config import EmailChannelConfig
+    assert EmailChannelConfig().max_follow_ups == 2
+    assert EmailChannelConfig().follow_up_delay_days == 0
+    for bad in ({"max_follow_ups": 3}, {"max_follow_ups": -1}, {"follow_up_delay_days": -2},
+                {"follow_up_delay_days": 61}):
+        with pytest.raises(ValidationError):
+            EmailChannelConfig(**bad)
