@@ -173,6 +173,39 @@ async def test_rules_replace_the_built_in_shape_of_the_sequence(state):
     assert "Use {{first_name}}, {{company}}, {{title}} as merge variables" in prompt
 
 
+async def inbox_prospect(state):
+    from sellbird.models.prospect import COMPANY_INBOX_SOURCE
+    pid = await state.add_prospect(Prospect(
+        first_name="", last_name="", title="General inbox", company="Acme Co", industry="Roofing",
+        email="info@acme.example", email_status="verified", source=COMPANY_INBOX_SOURCE))
+    return await state.get_prospect(pid)
+
+
+@pytest.mark.asyncio
+async def test_with_rules_a_company_inbox_is_greeted_as_the_rules_say(state):
+    # Rules in another language must not be overruled by an English greeting
+    # the Writer adds after them.
+    inbox = await inbox_prospect(state)
+    brain = RecordingBrain({"subject": "s", "body": "b"})
+    await writer(brain, state, RULES)._write_personal_email(inbox)
+    brain_seq = RecordingBrain(SEQ)
+    await writer(brain_seq, state, RULES, provider="instantly")._write_sequence([inbox])
+    for prompt in (brain.prompts[0], brain_seq.prompts[0]):
+        assert "Hi there" not in prompt
+        assert "the way the operator's rules say" in prompt
+
+
+@pytest.mark.asyncio
+async def test_without_rules_a_company_inbox_keeps_hi_there(state):
+    inbox = await inbox_prospect(state)
+    brain = RecordingBrain({"subject": "s", "body": "b"})
+    await writer(brain, state)._write_personal_email(inbox)
+    brain_seq = RecordingBrain(SEQ)
+    await writer(brain_seq, state, provider="instantly")._write_sequence([inbox])
+    assert "open with 'Hi there'" in brain.prompts[0]
+    assert "Greet with 'Hi there'" in brain_seq.prompts[0]
+
+
 @pytest.mark.asyncio
 async def test_without_rules_the_prompts_keep_the_built_in_shape(state):
     personal = await personal_prompt(state)

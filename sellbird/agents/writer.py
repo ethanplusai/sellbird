@@ -525,10 +525,14 @@ class Writer:
                 f"- Name: unknown (the company's general inbox, {prospect.email})",
                 f"- Company: {prospect.company}",
             ]
+            # With operator rules, their greeting wins: this line comes after them,
+            # and an English "Hi there" would overrule rules written in another language.
+            greeting = ("greet a general inbox the way the operator's rules say"
+                        if getattr(self, "email_rules", "")
+                        else "open with 'Hi there' or\n  address the company's team")
             inbox_rule = (
                 "\n- This goes to the company's general inbox, most likely read by the owner"
-                "\n  or the office manager. Use no first name; open with 'Hi there' or"
-                "\n  address the company's team.")
+                f"\n  or the office manager. Use no first name; {greeting}.")
         else:
             facts = [
                 f"- Name: {prospect.full_name()}",
@@ -633,10 +637,13 @@ Return ONLY JSON: {{"subject": "...", "body": "..."}}"""
         )
         inbox_batch = all(p.is_company_inbox for p in prospects)
         if inbox_batch:
+            greeting = ("Greet a general inbox the way the operator's rules say."
+                        if getattr(self, "email_rules", "")
+                        else "Greet with 'Hi there' or the company's team.")
             merge_rule = (
                 "- These go to each company's general inbox, so no names are known.\n"
                 "  Use {{company}} as the merge variable in every email and NEVER\n"
-                "  {{first_name}} or {{title}}. Greet with 'Hi there' or the company's team."
+                "  {{first_name}} or {{title}}. " + greeting
             )
         else:
             merge_rule = (
