@@ -227,26 +227,27 @@ def test_www_is_not_stripped_from_a_mailbox():
 
 
 # ── A whole top-level domain (".at") ──
+# Reserved top-level domains stand in for a country's (".at" in real use).
 
 def test_a_top_level_domain_entry_blocks_every_address_under_it():
     # Some countries allow no cold email even between businesses: one entry
     # keeps every company there out, including ones discovered later.
-    assert do_not_contact_match("info@firma.at", [".at"]) == ".at"
-    assert do_not_contact_match("jane@mail.firma.at", [".at"]) == ".at"
-    assert do_not_contact_domain_match("firma.at", [".at"]) == ".at"
+    assert do_not_contact_match("info@acme.test", [".test"]) == ".test"
+    assert do_not_contact_match("jane@mail.acme.test", [".test"]) == ".test"
+    assert do_not_contact_domain_match("acme.test", [".test"]) == ".test"
 
 
 def test_a_top_level_domain_entry_blocks_nothing_else():
-    for address in ("info@firma.example", "info@at.example", "info@firma.at.example",
-                    "info@flat", "at@firma.example"):
-        assert do_not_contact_match(address, [".at"]) == "", address
-    assert do_not_contact_domain_match("at.example", [".at"]) == ""
+    for address in ("info@acme.example", "info@test.example", "info@acme.test.example",
+                    "info@latest", "test@acme.example"):
+        assert do_not_contact_match(address, [".test"]) == "", address
+    assert do_not_contact_domain_match("test.example", [".test"]) == ""
 
 
 def test_a_top_level_domain_entry_is_normalised_by_the_config():
-    entries = ComplianceConfig(do_not_contact=[".AT", "*.de", " .li "]).do_not_contact
-    assert entries == [".at", ".de", ".li"]
-    assert _check("info@firma.de", entries).ok is False
+    entries = ComplianceConfig(do_not_contact=[".TEST", "*.invalid", " .example "]).do_not_contact
+    assert entries == [".test", ".invalid", ".example"]
+    assert _check("info@acme.invalid", entries).ok is False
 
 
 def test_a_domain_with_a_leading_dot_is_still_that_domain():
