@@ -9,6 +9,23 @@ minor versions can still change behaviour.
 
 ### Added
 
+- **German opt-outs work like French ones.** A German
+  `compliance.opt_out_line` ("Kein Interesse? Eine kurze Antwort genügt, dann
+  melde ich mich nicht mehr.") passes validation, and German replies ("Bitte
+  austragen", "Kein Interesse.", "Nein danke", "Schreiben Sie mir nicht mehr")
+  are honoured by rule before the model reads them. "Nicht austragen", "falls
+  kein Interesse besteht" or "kein Interesse an SEO, aber ..." are not.
+- **`channels.email.max_follow_ups` and `follow_up_delay_days`.** Stage only
+  one reminder (or none) and choose the days before each follow-up; the wait
+  holds when a follow-up is planned and when it may go. Unset, nothing changes.
+  Gmail, Microsoft and SMTP only; Instantly gets the whole sequence.
+- **A whole top-level domain on `compliance.do_not_contact`.** `.at` (or `*.at`)
+  keeps every address under it out of sending, discovery, export and the
+  register, for countries where cold email needs consent between businesses too.
+- **The offer preview can use your email rules.** `with_rules` on the
+  `offer_preview` MCP tool and the dashboard API writes the sample the way the
+  Writer will; the default still leaves them out.
+
 - **`writer.require_tip: true` skips prospects with nothing to build a tip
   on.** A first email is meant to name one concrete thing the sender would
   change; with no finding about the company, the draft could only say it had no
@@ -189,6 +206,9 @@ minor versions can still change behaviour.
 
 ### Fixed
 
+- **Your email rules decide how a company inbox is greeted.** The Writer added
+  "open with 'Hi there'" after your rules, so German rules still produced an
+  English greeting.
 - **Instantly's daily cap counts your local day, not UTC** (from #177 by
   @solvejet-team), so the cap resets at your midnight.
 

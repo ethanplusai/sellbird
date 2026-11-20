@@ -95,15 +95,25 @@ BARE_OPT_OUTS = {"stop", "unsubscribe", "remove", "remove me", "opt out",
                  "non merci", "arret", "arreter", "desabonner", "desabonnement",
                  "desabonnez-moi", "desinscrire", "desinscription", "desinscrivez-moi",
                  "retirer", "retirez-moi",
+                 # German, compared without umlauts. Not "kein interesse": this check
+                 # drops the "?" of "Kein Interesse?", which asks rather than stops;
+                 # GERMAN_OPT_OUT_RE reads that one where the sentence ends.
+                 "stopp", "abmelden", "austragen", "abbestellen", "nein danke",
+                 "bitte austragen", "bitte abmelden",
                  "הסר", "הסירו", "הסירי", "תסיר", "תסירו", "להסיר", "הסרה", "להסרה"}
 # Said around a bare opt-out without changing it ("הסר בבקשה", "הסר, תודה").
 _BARE_COURTESIES = {"בבקשה", "נא", "תודה", "רבה", "por", "favor", "gracias", "saludos",
-                    "merci", "svp", "sil", "vous", "plait"}
+                    "merci", "svp", "sil", "vous", "plait",
+                    # German; "ß" survives umlaut folding ("Grüße" -> "gruße").
+                    "bitte", "danke", "freundliche", "gruss", "grusse", "gruesse", "gruß", "gruße",
+                    "mfg"}
 _MOBILE_SIGNATURE_RE = re.compile(
     r"^[ \t\u200e\u200f]*(?:sent from my \w[^\n]*|get outlook for \w[^\n]*"
     r"|sent from \w+ mail[^\n]*|נשלח מ[^\n]*|קבל(?:ו)? את outlook[^\n]*"
     r"|enviado desde mi \w[^\n]*|obt[eé]n outlook para \w[^\n]*"
-    r"|envoy[eé] de mon \w[^\n]*|obtenez outlook pour \w[^\n]*)$",
+    r"|envoy[eé] de mon \w[^\n]*|obtenez outlook pour \w[^\n]*"
+    r"|von meinem \w[^\n]* gesendet|gesendet von meinem \w[^\n]*"
+    r"|outlook f[üu]r \w[^\n]* (?:herunterladen|beziehen))$",
     re.IGNORECASE | re.MULTILINE)
 
 # Hebrew opt-outs. Each needs a verb aimed at the sender and its object
@@ -316,6 +326,98 @@ FRENCH_NO_THANKS_RE = re.compile(
     r"\bnon,?[ \t]+merci\b(?![ \t]*(?:a|pour|de|d'|bien)\b)")
 
 
+# German opt-outs, matched like the French ones: umlaut-free ("loschen" is
+# "löschen"), a line at a time, and only with the verb aimed at the sender.
+# "Löschen Sie bitte den doppelten Termin" is about an appointment, "ich
+# bekomme keine Mails mehr" is news, "kein Interesse an SEO, aber ..." is a
+# narrower answer, not a stop.
+_DE_US = r"(?:mich|uns)"
+_DE_MY = (r"(?:mich|uns|(?:meine|unsere)\s+(?:e-?mail-?adresse|e-?mail|adresse|daten"
+          r"|kontaktdaten))")
+_DE_LIST = (r"(?:(?:ihrer|ihrem|ihren|der|dem|den|eurer|eurem)\s+)?(?:liste|verteiler|mailingliste"
+            r"|newsletter|kartei|datenbank|adressliste|e-?mail-?liste)\w*")
+_DE_MAIL = r"(?:weiteren?\s+)?(?:e-?mails?|mails|nachrichten|werbung|werbemails?|newsletter)"
+# The thought ends here: not ", aber", ", sondern", ", ausser", and not at a
+# plain line wrap ("kein Interesse\nan SEO, aber ..."): only at a blank line
+# or the end of the reply.
+_DE_SAY_END = (r"(?=[ \t]*(?:[.!;]|\n[ \t]*(?:\n|\Z)|\Z|,(?![ \t]*(?:aber|sondern|ausser|außer|wenn"
+               r"|falls|doch|jedoch|allerdings|nur|es[ \t]+sei[ \t]+denn)(?!\w))))")
+# Umlauts arrive as "o" (folded) or as typed "oe".
+_DE_DELETE = r"(?:l(?:o|oe)schen|entfernen|streichen)"
+GERMAN_OPT_OUT_PATTERNS = (
+    # Take me off / unsubscribe.
+    r"(?:bitte\s+)?" + _DE_MY + r"\s+(?:bitte\s+)?(?:sofort\s+)?(?:austragen|abmelden|" + _DE_DELETE
+    + r")" + _DE_SAY_END,
+    r"bitte\s+(?:austragen|abmelden|abbestellen)" + _DE_SAY_END,
+    r"(?:tragen|melden)\s+sie\s+" + _DE_US + r"\s+(?:bitte\s+)?(?:(?:aus|von)\s+(?:\w+\s+){0,3})?"
+    r"(?:aus|ab)",
+    _DE_DELETE + r"\s+sie\s+(?:bitte\s+)?" + _DE_MY
+    + r"(?:\s+bitte)?(?:\s+(?:aus|von)\s+" + _DE_LIST + "|" + _DE_SAY_END + ")",
+    r"nehmen\s+sie\s+" + _DE_US + r"\s+(?:bitte\s+)?(?:von|aus)\s+" + _DE_LIST,
+    # No more email, as a request on its own ("Bitte keine Mails mehr."), never
+    # mid-sentence: "seit dem Update kommen keine Mails mehr an" is news.
+    r"(?:^|(?<=[.!?;,]))[ \t]*(?:bitte[ \t,]+)?keine\s+" + _DE_MAIL
+    + r"\s+mehr(?:\s+(?:senden|schicken|zusenden))?" + _DE_SAY_END,
+    # Don't write to me (any more).
+    r"(?:schreiben|kontaktieren|mailen|senden|schicken|bel(?:a|ae)stigen|st(?:o|oe)ren)\s+sie\s+"
+    r"(?:mir|mich|uns)\s+(?:bitte\s+)?(?:nicht\s+mehr|nie\s+wieder|keine\s+" + _DE_MAIL + r"\s+mehr)",
+    r"(?:ich|wir)\s+(?:m(?:o|oe)chten?|will|wollen|w(?:u|ue)nschen?)\s+(?:keine\s+" + _DE_MAIL
+    + r"(?:\s+mehr)?(?:\s+(?:erhalten|bekommen))?"
+    r"|nicht\s+(?:mehr\s+)?(?:kontaktiert|angeschrieben|angemailt)\s+werden)" + _DE_SAY_END,
+    r"h(?:o|oe)ren\s+sie\s+(?:bitte\s+)?(?:damit\s+)?auf,?\s+(?:mir|mich|uns)\s+(?:zu\s+(?:schreiben"
+    r"|kontaktieren|mailen)|anzuschreiben|(?:e-?mails?|mails|nachrichten)\s+zu\s+(?:schicken|senden))",
+    # Not interested, as the whole thought.
+    r"(?:(?:ich\s+bin|wir\s+sind|bin|sind)\s+)?nicht\s+interessiert(?:\s+(?:mehr|danke))?"
+    + _DE_SAY_END,
+    r"(?:(?:ich\s+habe|wir\s+haben|habe|haben)\s+)?kein\s+interesse(?:\s+(?:mehr|daran|momentan"
+    r"|zurzeit|danke))?" + _DE_SAY_END,
+)
+GERMAN_OPT_OUT_RE = re.compile(r"(?<![\w'])(?:" + "|".join(GERMAN_OPT_OUT_PATTERNS) + r")(?![\w'])",
+                               re.MULTILINE)
+# The word before a match that negates, conditions or makes it news ("falls
+# kein Interesse", "ich bekomme keine Mails mehr", "nicht austragen").
+_DE_NOT_FINAL_BEFORE = {"nicht", "kein", "wenn", "falls", "ob", "sobald", "warum", "wieso",
+                        "weshalb", "bevor", "dass", "bekomme", "bekommen", "bekommt", "erhalte",
+                        "erhalten", "erhalt", "kriege", "kriegen", "ist", "sind", "seid", "war",
+                        "waren", "nie", "noch"}
+# What follows a match that makes it "not now", "not like this" or "not here":
+# "in 3 Monaten gerne wieder", "nicht mehr auf Englisch", "sondern an ...".
+_DE_NOT_FINAL_AFTER_RE = re.compile(
+    r"(?<!\w)(?:sondern|lieber|stattdessen|anstatt|per\s+(?:telefon|post|whatsapp|sms)|telefonisch"
+    r"|rufen\s+sie|anrufen|hier|bis|vor|montag|dienstag|mittwoch|donnerstag|freitag|samstag|sonntag"
+    r"|wochen?|monate?n?|jahre?n?|nochmal|noch\s+einmal|wieder|sp(?:a|ae)ter|demn(?:a|ae)chst"
+    r"|n(?:a|ae)chste[nmrs]?|englisch|franz(?:o|oe)sisch|italienisch|adresse|kolleg\w*"
+    r"|januar|februar|m(?:a|ae)rz|april|mai|juni|juli|august|september|oktober|november"
+    r"|dezember|fr(?:u|ue)hling|sommer|herbst|winter)(?!\w)")
+# How far around a match its context is read: enough for a sentence, and a
+# bound, so a reply with thousands of held-back matches stays linear.
+_DE_CONTEXT = 300
+# "Nein danke": as with "no thanks". Not "ja oder nein, danke ...", "warum
+# nein", or "nein, danke Ihnen" / "danke für ...".
+GERMAN_NO_THANKS_RE = re.compile(
+    r"(?<!\boder )(?<!warum )(?<!\bob )"
+    r"\bnein,?[ \t]+danke\b(?![ \t]*(?:fur|ihnen|dir|euch|schon|sehr)\b)")
+
+
+def _german_opt_out(text: str):
+    """The first German opt-out phrase in _accent_free_lines text that means it."""
+    for m in GERMAN_OPT_OUT_RE.finditer(text):
+        lo = max(0, m.start() - _DE_CONTEXT)
+        newline = text.rfind("\n", lo, m.start())
+        line_start = newline + 1 if newline >= 0 else lo
+        last = _FR_LAST_WORD_RE.search(text[max(line_start, m.start() - 40):m.start()])
+        before = last.group(1).strip("\"«»(-,") if last else ""
+        if before in _DE_NOT_FINAL_BEFORE:
+            continue
+        rest = text[m.end():m.end() + _DE_CONTEXT]
+        sentence_end = re.search(r"[.!?;\n]", rest)
+        after = rest[:sentence_end.start()] if sentence_end else rest
+        if _DE_NOT_FINAL_AFTER_RE.search(after):
+            continue
+        return m
+    return None
+
+
 def _french_opt_out(text: str):
     """The first French opt-out phrase in _accent_free_lines text that means it."""
     for m in FRENCH_OPT_OUT_RE.finditer(text):
@@ -454,10 +556,15 @@ def _opt_out_reason(their_text: str, own_words: str) -> dict | None:
     if m:
         return {"rule": "phrase", "matched": m.group(0),
                 "why": f'Their reply contains "{m.group(0)}".'}
+    m = _german_opt_out(_accent_free_lines(their_text))
+    if m:
+        return {"rule": "phrase", "matched": m.group(0),
+                "why": f'Their reply contains "{m.group(0)}".'}
     for line in their_text.split("\n"):
         line = _flat(line)
         m = (SPANISH_NO_THANKS_RE.search(_no_accents(line))
-             or FRENCH_NO_THANKS_RE.search(_no_accents(line)))
+             or FRENCH_NO_THANKS_RE.search(_no_accents(line))
+             or GERMAN_NO_THANKS_RE.search(_no_accents(line)))
         if m:
             return {"rule": "no_thanks", "matched": m.group(0),
                     "why": f'Their reply says "{m.group(0)}" (no thanks).'}

@@ -911,6 +911,119 @@ def test_french_lines_that_dont_say_it_stops_or_have_a_link_are_refused():
             ComplianceConfig(opt_out_line=bad)
 
 
+# ── German opt-outs ──
+
+@pytest.mark.parametrize("reply", [
+    "Nein danke.", "nein, danke", "Nein danke, schönen Tag noch", "Guten Tag, nein danke.",
+    "STOPP", "Stop", "Abmelden", "Austragen", "Bitte austragen.", "bitte abmelden",
+    "Bitte mich austragen.", "Bitte löschen Sie meine Adresse.", "Löschen Sie meine Daten.",
+    "Tragen Sie mich bitte aus Ihrem Verteiler aus.", "Melden Sie mich ab.",
+    "Nehmen Sie mich bitte von Ihrer Liste.", "Entfernen Sie mich aus Ihrer Liste.",
+    "Bitte keine Mails mehr.", "Bitte keine E-Mails mehr senden.", "Keine weiteren Nachrichten mehr.",
+    "Schreiben Sie mir bitte nicht mehr.", "Kontaktieren Sie mich nicht mehr.",
+    "Senden Sie mir keine Mails mehr.", "Schicken Sie uns keine Werbung mehr.",
+    "Ich möchte keine E-Mails mehr erhalten.", "Wir wünschen keine Werbung.",
+    "Ich möchte nicht mehr kontaktiert werden.", "Hören Sie bitte auf, mir zu schreiben.",
+    "Kein Interesse.", "kein Interesse, danke", "Wir haben kein Interesse.",
+    "Ich bin nicht interessiert.", "Nicht interessiert, danke.",
+    "Kein Interesse\n\nMax Muster\nTel. 555-0100", "Kein Interesse\nVon meinem iPhone gesendet",
+    "Abmelden, Grüße", "Danke, bitte keine Mails mehr.", "Löschen Sie mich bitte.",
+    "Bitte loeschen Sie meine Adresse.", "Ich moechte nicht mehr kontaktiert werden.",
+    "Hoeren Sie bitte auf, mir zu schreiben.",
+])
+def test_german_opt_outs(reply):
+    assert _opt_out_reason(reply, reply) is not None
+
+
+@pytest.mark.parametrize("reply", [
+    "Ja oder nein, danke für eine kurze Antwort", "Nein, danke Ihnen!", "Warum nein, danke",
+    "Nein danke für die Info, aber was kostet das?",
+    "Kein Interesse an SEO, aber die Buchung klingt gut.",
+    "Kein Interesse, aber mein Partner vielleicht.", "Kein Interesse?",
+    "Falls kein Interesse besteht, melde ich mich.", "Wenn Sie nicht interessiert sind, kein Problem.",
+    "Mein Partner ist nicht interessiert, aber ich schon.", "Das interessiert mich, was kostet es?",
+    "Ich bekomme keine Mails mehr von Ihrem Shop.", "Wir erhalten keine Nachrichten mehr seit Mai.",
+    "Schreiben Sie mir nicht mehr hier, sondern an verkauf@acme.example",
+    "Schicken Sie mir keine Mails mehr, rufen Sie lieber an.",
+    "Kontaktieren Sie mich nicht mehr vor Januar.",
+    "Bitte nicht austragen.", "Ich möchte mich nicht abmelden.",
+    "Löschen Sie bitte den doppelten Termin.", "Bitte keine Rechnung mehr per Post.",
+    "Schicken Sie mir das Angebot", "Abmelden kann ich mich ja jederzeit, oder?",
+    # News, not a request: a lost prospect is silent, so these go to the model.
+    "Ich habe keine Mails mehr von Ihnen bekommen, können Sie das Angebot nochmal senden?",
+    "Seit dem Update kommen keine Mails mehr an.",
+    "Ich bekomme seit Mai keine Mails mehr.", "Leider kommen bei uns keine Mails mehr.",
+    "Wir haben keine Angebote mehr offen, melden Sie sich im neuen Jahr.",
+    # Not now, but later.
+    "Kein Interesse momentan, in 3 Monaten gerne wieder.",
+    "Kein Interesse, melden Sie sich in 6 Monaten nochmal.",
+    "Kein Interesse, erst nächstes Jahr wieder.", "Kein Interesse, in zwei Wochen gerne.",
+    "Schreiben Sie mir bitte nicht mehr auf Englisch.",
+    # Narrowed, not stopped.
+    "Ich möchte keine Werbung, aber ein konkretes Angebot gerne.",
+    "Ich möchte keine Newsletter, nur das Angebot.",
+    "Wir haben kein Interesse\nan SEO, aber die Buchung klingt gut.",
+])
+def test_german_that_is_not_an_opt_out(reply):
+    assert _opt_out_reason(reply, reply) is None
+
+
+def test_a_long_german_reply_is_quick():
+    import time
+    for text in ("bitte nicht austragen sie mich " * 20000,
+                 # Thousands of matches that are each held back: every one must stay cheap.
+                 "falls kein interesse. " * 20000):
+        started = time.monotonic()
+        _opt_out_reason(text, text)
+        assert time.monotonic() - started < 2
+
+
+@pytest.mark.asyncio
+async def test_a_german_opt_out_reaches_the_handler(state):
+    status, _ = await _reply(state, "Nein danke.")
+    assert status == "opted_out"
+
+
+def test_german_mobile_signature_doesnt_hide_a_bare_opt_out():
+    reply = "Abmelden\n\nVon meinem iPhone gesendet"
+    assert _opt_out_reason(reply, reply)["rule"] == "only_words"
+
+
+def test_our_own_german_footer_quoted_back_is_not_an_opt_out():
+    line = "Kein Interesse? Eine kurze Antwort genügt, dann melde ich mich nicht mehr."
+    ours = OurText([line])
+    their = ours.remove(f"Das interessiert mich, was kostet es?\n> {line}")
+    assert _opt_out_reason(their, "Das interessiert mich, was kostet es?") is None
+
+
+def test_german_opt_out_lines_are_accepted():
+    for line in ("Kein Interesse? Eine kurze Antwort genügt, dann melde ich mich nicht mehr.",
+                 "Kein Interesse? Eine kurze Antwort genuegt, dann melde ich mich nicht mehr.",
+                 "Antworten Sie mit STOPP, um sich abzumelden.",
+                 "Möchten Sie keine weiteren Mails? Antworten Sie einfach mit «Nein danke».",
+                 "Passt das nicht? Sagen Sie es kurz, und ich schreibe Ihnen nicht mehr.",
+                 "Falls das nicht für Sie ist, genügt ein kurzes Nein, dann trage ich Sie aus.",
+                 "Passt es nicht? Dann lasse ich Sie in Ruhe.",
+                 "Eine kurze Antwort genügt, und ich höre auf, Ihnen zu schreiben.",
+                 "Ein Wort genügt, und Sie hören nichts mehr von mir."):
+        assert ComplianceConfig(opt_out_line=line).opt_out_line == line
+
+
+def test_german_lines_that_dont_say_it_stops_or_have_a_link_are_refused():
+    import pydantic
+    for bad in ("Danke fürs Lesen!", "Freundliche Grüsse", "Einen schönen Tag noch.",
+                "Klicken Sie hier, um sich abzumelden.",
+                "Zum Abmelden: https://example.com/u"):
+        with pytest.raises(pydantic.ValidationError):
+            ComplianceConfig(opt_out_line=bad)
+
+
+def test_every_german_reply_an_opt_out_line_can_ask_for_is_caught():
+    from sellbird.config import GERMAN_OPT_OUT_WORDS
+    for word in GERMAN_OPT_OUT_WORDS:
+        assert _opt_out_reason(word, word), word
+
+
 # ── Hebrew escalation ──
 
 @pytest.mark.asyncio

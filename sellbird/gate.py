@@ -51,6 +51,10 @@ class GateResult:
 _INVISIBLE_RE = re.compile("[\u00ad\u200b-\u200d\u2060\ufeff]")
 _DNC_DOMAIN_RE = re.compile(r"^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9-]{2,63}$")
 _DNC_LOCAL_RE = re.compile(r"^[a-z0-9._%+'-]+$")
+# A whole top-level domain, written with its leading dot (".at", "*.at"): a
+# country where cold email needs consent even between businesses. The dot is
+# what tells it from a typo like "example", which stays an error.
+_DNC_TLD_RE = re.compile(r"^\*?\.((?:[a-z]{2,63}|xn--[a-z0-9-]{1,59}))$")
 
 
 def _clean_text(raw) -> str:
@@ -82,6 +86,9 @@ def do_not_contact_entry(raw) -> str:
     entry = _clean_text(raw).strip().lower()
     entry = re.sub(r"^(?:[a-z][a-z0-9+.-]*://|mailto:)", "", entry)
     entry = re.split(r"[/?#]", entry, maxsplit=1)[0]
+    tld = _DNC_TLD_RE.match(entry)
+    if tld:
+        return "." + tld.group(1)
     entry = re.sub(r"^(?:\*@|\*\.|@)", "", entry)
     if "@" in entry:
         local, _, domain = entry.rpartition("@")
@@ -137,9 +144,17 @@ def do_not_contact_match(to_email: str, entries) -> str:
             e_local, _, e_host = entry.rpartition("@")
             if e_host == host and e_local in (local, base_local):
                 return entry
-        elif host == entry or host.endswith("." + entry):
+        elif _covers(entry, host):
             return entry
     return ""
+
+
+def _covers(entry: str, host: str) -> bool:
+    """Whether a domain entry covers ``host``: the domain and its subdomains on
+    a label boundary, or every host under a top-level domain entry (".at")."""
+    if entry.startswith("."):
+        return host.endswith(entry)
+    return host == entry or host.endswith("." + entry)
 
 
 def do_not_contact_domain_match(domain: str, entries) -> str:
@@ -162,7 +177,7 @@ def do_not_contact_domain_match(domain: str, entries) -> str:
         entry = do_not_contact_entry(raw)
         if not entry or "@" in entry:
             continue
-        if host == entry or host.endswith("." + entry):
+        if _covers(entry, host):
             return entry
     return ""
 

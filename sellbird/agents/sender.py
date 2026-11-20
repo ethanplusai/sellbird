@@ -315,6 +315,21 @@ class Sender:
             except Exception as e:
                 logger.error(f"Sender: Failed to deploy campaign {campaign.name}: {e}")
 
+    def _stages_follow_up(self, step: int) -> bool:
+        """Whether follow-up ``step`` (2 or 3) is staged: follow_ups on, and
+        within channels.email.max_follow_ups."""
+        email = self.config.channels.email
+        if not getattr(email, "follow_ups", True):
+            return False
+        most = getattr(email, "max_follow_ups", None)
+        return most is None or step - 1 <= int(most)
+
+    def _follow_up_days(self, planned: int) -> int:
+        """The wait before a follow-up: channels.email.follow_up_delay_days when
+        set, else the Writer's planned ``planned`` days."""
+        override = int(getattr(self.config.channels.email, "follow_up_delay_days", 0) or 0)
+        return override if override > 0 else planned
+
     def _validate_sequence(self, campaign) -> bool:
         """Never deploy a broken or empty sequence."""
         if not campaign.sequence:
@@ -691,9 +706,10 @@ class Sender:
             cumulative_days = 0
             new_rows = 0
             for step in campaign.sequence:
-                if step.step > 1 and not getattr(self.config.channels.email, "follow_ups", True):
-                    continue    # first email only; a reply is still answered
-                cumulative_days += max(0, step.delay_days)
+                if step.step > 1 and not self._stages_follow_up(step.step):
+                    continue    # beyond the follow-ups allowed; a reply is still answered
+                cumulative_days += max(0, step.delay_days if step.step == 1
+                                       else self._follow_up_days(step.delay_days))
                 send_at = now + timedelta(days=cumulative_days)
                 if window is not None:
                     send_at = next_send_time(send_at, zone, window)
@@ -786,9 +802,13 @@ class Sender:
         if sent_at is None:
             return None
         delay = await self.state.get_step_delay_days(item.get("campaign_id"), item["step"])
+        if delay is not None:
+            delay = self._follow_up_days(delay)
         if delay is None:  # campaign unknown: fall back to the planned spacing
             planned, prev_planned = _at(item["send_at"]), _at(prev["send_at"])
             gap = (planned - prev_planned) if planned and prev_planned else MIN_FOLLOW_UP_GAP
+            # A longer wait set after staging still holds.
+            gap = max(gap, timedelta(days=self._follow_up_days(0)))
         else:
             gap = timedelta(days=delay)
         ready_at = sent_at + max(MIN_FOLLOW_UP_GAP, gap)

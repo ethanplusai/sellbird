@@ -293,6 +293,15 @@ class EmailChannelConfig(BaseModel):
     # 3) are not prepared, so none can go out to someone who never answered;
     # a reply is still read and answered as usual. Gmail/Microsoft/SMTP only.
     follow_ups: bool = True
+    # How many follow-ups a campaign stages, 0-2; unset = every follow-up the
+    # Writer drafted. With 1, only the first reminder is prepared (where one
+    # reminder is the polite limit). follow_ups: false still means none.
+    # Gmail/Microsoft/SMTP only: Instantly gets the whole sequence.
+    max_follow_ups: int | None = None
+    # Days to wait before each follow-up, 1-60. 0 = the spacing the Writer
+    # planned (3, then 4 days). Holds both when a follow-up is planned and when
+    # it may actually go. Gmail/Microsoft/SMTP only.
+    follow_up_delay_days: int = 0
     # New domain? Ramp cold email up slowly (see WarmupConfig). Native
     # providers only: Instantly has its own warmup and per-account limits.
     warmup: WarmupConfig = WarmupConfig()
@@ -325,6 +334,20 @@ class EmailChannelConfig(BaseModel):
     def _per_inbox_cap_range(cls, v: int) -> int:
         if not 1 <= v <= 500:
             raise ValueError("per_inbox_daily_cap must be between 1 and 500")
+        return v
+
+    @field_validator("max_follow_ups")
+    @classmethod
+    def _follow_up_count_range(cls, v: int | None) -> int | None:
+        if v is not None and not 0 <= v <= 2:
+            raise ValueError("max_follow_ups must be 0, 1 or 2")
+        return v
+
+    @field_validator("follow_up_delay_days")
+    @classmethod
+    def _follow_up_delay_range(cls, v: int) -> int:
+        if not 0 <= v <= 60:
+            raise ValueError("follow_up_delay_days must be between 1 and 60, or 0 for the Writer's spacing")
         return v
 
     def cold_daily_cap(self, today: _date | None = None) -> int:
@@ -481,6 +504,8 @@ HEBREW_OPT_OUT_WORDS = ("הסר", "הסירו", "הסרה", "לא תודה", "ה
 SPANISH_OPT_OUT_WORDS = ("no gracias", "baja", "darme de baja")
 FRENCH_OPT_OUT_WORDS = ("non merci", "non, merci", "arrêt", "désabonner", "désabonnement",
                         "désabonnez-moi", "retirez-moi")
+GERMAN_OPT_OUT_WORDS = ("nein danke", "nein, danke", "stopp", "abmelden", "austragen",
+                        "kein interesse")
 # Wording that tells people the emails can stop, in any phrasing. An
 # opt_out_line must say so somehow: one that reads like a sign-off ("Cheers!")
 # gives nobody a way out, which is worse than leaving the line off on purpose.
@@ -524,6 +549,19 @@ _SAYS_IT_STOPS_FR_RE = re.compile(
     re.IGNORECASE)
 # "Click" in French: "cliquez ici pour vous désabonner".
 _FRENCH_CLICK_RE = re.compile(r"\bcliqu(?:ez|er|e)\b", re.IGNORECASE)
+# German, matched with umlauts removed: "Kein Interesse? Eine kurze Antwort
+# genügt, dann melde ich mich nicht mehr", "Antworten Sie mit STOPP".
+_SAYS_IT_STOPS_DE_RE = re.compile(
+    r"(?:\bstopp?\b|abmeld|abzumelden|austrag|\btrage\s+(?:ich\s+)?(?:sie|dich|euch)\s+aus\b"
+    r"|\bnein,?\s+danke\b|\bkein(?:e|en)?\s+(?:weiteren?\s+)?(?:e-?mails?|mails|nachrichten)\b"
+    r"|\bkein\s+interesse|\bnicht\s+interessiert"
+    r"|\b(?:melde|schreibe|kontaktiere|maile)\s+(?:ich\s+)?(?:mich\s+)?(?:ihnen\s+|dir\s+|euch\s+)?"
+    r"nicht\s+mehr\b"
+    r"|\bnicht\s+mehr\s+(?:\w+\s+){0,2}?(?:schreib|meld|kontaktier|anschreib|mail)\w*"
+    r"|\bin\s+ruhe\b|\bh(?:o|oe)re\s+(?:ich\s+)?auf\b|\bnichts\s+mehr\s+von\s+(?:mir|uns)\b)",
+    re.IGNORECASE)
+# "Click" in German: "klicken Sie hier, um sich abzumelden".
+_GERMAN_CLICK_RE = re.compile(r"\bklick", re.IGNORECASE)
 
 
 def _fold_accents(text: str) -> str:
@@ -597,14 +635,15 @@ class ComplianceConfig(BaseModel):
             return v
         folded = _fold_accents(v)
         if (any(bit in lowered for bit in ("http", "www.", "click", "@"))
-                or _HEBREW_CLICK_RE.search(v) or _FRENCH_CLICK_RE.search(folded)):
+                or _HEBREW_CLICK_RE.search(v) or _FRENCH_CLICK_RE.search(folded)
+                or _GERMAN_CLICK_RE.search(folded)):
             raise ValueError(
                 "opt_out_line can't contain a link or an email address: cold email "
                 "allows one link, and opting out must be as simple as replying."
             )
         if not (_SAYS_IT_STOPS_RE.search(v) or _SAYS_IT_STOPS_HE_RE.search(v)
                 or _SAYS_IT_STOPS_ES_RE.search(v) or _SAYS_IT_STOPS_IT_RE.search(v)
-                or _SAYS_IT_STOPS_FR_RE.search(folded)):
+                or _SAYS_IT_STOPS_FR_RE.search(folded) or _SAYS_IT_STOPS_DE_RE.search(folded)):
             raise ValueError(
                 "opt_out_line doesn't tell people they can stop these emails. Say so in "
                 "any words (\"Not interested? Just let me know and I won't email you "
