@@ -104,7 +104,9 @@ BARE_OPT_OUTS = {"stop", "unsubscribe", "remove", "remove me", "opt out",
 # Said around a bare opt-out without changing it ("הסר בבקשה", "הסר, תודה").
 _BARE_COURTESIES = {"בבקשה", "נא", "תודה", "רבה", "por", "favor", "gracias", "saludos",
                     "merci", "svp", "sil", "vous", "plait",
-                    "bitte", "danke", "freundliche", "gruss", "grusse", "mfg"}
+                    # German; "ß" survives umlaut folding ("Grüße" -> "gruße").
+                    "bitte", "danke", "freundliche", "gruss", "grusse", "gruesse", "gruß", "gruße",
+                    "mfg"}
 _MOBILE_SIGNATURE_RE = re.compile(
     r"^[ \t\u200e\u200f]*(?:sent from my \w[^\n]*|get outlook for \w[^\n]*"
     r"|sent from \w+ mail[^\n]*|נשלח מ[^\n]*|קבל(?:ו)? את outlook[^\n]*"
@@ -334,28 +336,35 @@ _DE_MY = (r"(?:mich|uns|(?:meine|unsere)\s+(?:e-?mail-?adresse|e-?mail|adresse|d
           r"|kontaktdaten))")
 _DE_LIST = (r"(?:(?:ihrer|ihrem|ihren|der|dem|den|eurer|eurem)\s+)?(?:liste|verteiler|mailingliste"
             r"|newsletter|kartei|datenbank|adressliste|e-?mail-?liste)\w*")
-_DE_MAIL = (r"(?:weiteren?\s+)?(?:e-?mails?|mails|nachrichten|werbung|werbemails?|newsletter"
-            r"|angebote)")
-# The thought ends here: not ", aber", ", sondern", ", ausser".
-_DE_SAY_END = (r"(?=[ \t]*(?:[.!;]|$|,(?![ \t]*(?:aber|sondern|ausser|außer|wenn|falls|doch|jedoch"
-               r"|allerdings|nur|es[ \t]+sei[ \t]+denn)(?!\w))))")
+_DE_MAIL = r"(?:weiteren?\s+)?(?:e-?mails?|mails|nachrichten|werbung|werbemails?|newsletter)"
+# The thought ends here: not ", aber", ", sondern", ", ausser", and not at a
+# plain line wrap ("kein Interesse\nan SEO, aber ..."): only at a blank line
+# or the end of the reply.
+_DE_SAY_END = (r"(?=[ \t]*(?:[.!;]|\n[ \t]*(?:\n|\Z)|\Z|,(?![ \t]*(?:aber|sondern|ausser|außer|wenn"
+               r"|falls|doch|jedoch|allerdings|nur|es[ \t]+sei[ \t]+denn)(?!\w))))")
+# Umlauts arrive as "o" (folded) or as typed "oe".
+_DE_DELETE = r"(?:l(?:o|oe)schen|entfernen|streichen)"
 GERMAN_OPT_OUT_PATTERNS = (
     # Take me off / unsubscribe.
-    r"(?:bitte\s+)?" + _DE_MY + r"\s+(?:bitte\s+)?(?:sofort\s+)?(?:austragen|abmelden|loschen"
-    r"|entfernen|streichen)" + _DE_SAY_END,
+    r"(?:bitte\s+)?" + _DE_MY + r"\s+(?:bitte\s+)?(?:sofort\s+)?(?:austragen|abmelden|" + _DE_DELETE
+    + r")" + _DE_SAY_END,
     r"bitte\s+(?:austragen|abmelden|abbestellen)" + _DE_SAY_END,
     r"(?:tragen|melden)\s+sie\s+" + _DE_US + r"\s+(?:bitte\s+)?(?:(?:aus|von)\s+(?:\w+\s+){0,3})?"
     r"(?:aus|ab)",
-    r"(?:loschen|entfernen|streichen)\s+sie\s+(?:bitte\s+)?" + _DE_MY
-    + r"(?:\s+(?:aus|von)\s+" + _DE_LIST + "|" + _DE_SAY_END + ")",
+    _DE_DELETE + r"\s+sie\s+(?:bitte\s+)?" + _DE_MY
+    + r"(?:\s+bitte)?(?:\s+(?:aus|von)\s+" + _DE_LIST + "|" + _DE_SAY_END + ")",
     r"nehmen\s+sie\s+" + _DE_US + r"\s+(?:bitte\s+)?(?:von|aus)\s+" + _DE_LIST,
-    # No more email / don't write to me (any more).
-    r"keine\s+" + _DE_MAIL + r"\s+mehr",
-    r"(?:schreiben|kontaktieren|mailen|senden|schicken|belastigen|storen)\s+sie\s+(?:mir|mich|uns)"
-    r"\s+(?:bitte\s+)?(?:nicht\s+mehr|nie\s+wieder|keine\s+" + _DE_MAIL + r"\s+mehr)",
-    r"(?:ich|wir)\s+(?:mochte|mochten|will|wollen|wunsche|wunschen)\s+(?:keine\s+" + _DE_MAIL
-    + r"|nicht\s+(?:mehr\s+)?(?:kontaktiert|angeschrieben|angemailt)\s+werden)",
-    r"horen\s+sie\s+(?:bitte\s+)?(?:damit\s+)?auf,?\s+(?:mir|mich|uns)\s+(?:zu\s+(?:schreiben"
+    # No more email, as a request on its own ("Bitte keine Mails mehr."), never
+    # mid-sentence: "seit dem Update kommen keine Mails mehr an" is news.
+    r"(?:^|(?<=[.!?;,]))[ \t]*(?:bitte[ \t,]+)?keine\s+" + _DE_MAIL
+    + r"\s+mehr(?:\s+(?:senden|schicken|zusenden))?" + _DE_SAY_END,
+    # Don't write to me (any more).
+    r"(?:schreiben|kontaktieren|mailen|senden|schicken|bel(?:a|ae)stigen|st(?:o|oe)ren)\s+sie\s+"
+    r"(?:mir|mich|uns)\s+(?:bitte\s+)?(?:nicht\s+mehr|nie\s+wieder|keine\s+" + _DE_MAIL + r"\s+mehr)",
+    r"(?:ich|wir)\s+(?:m(?:o|oe)chten?|will|wollen|w(?:u|ue)nschen?)\s+(?:keine\s+" + _DE_MAIL
+    + r"(?:\s+mehr)?(?:\s+(?:erhalten|bekommen))?"
+    r"|nicht\s+(?:mehr\s+)?(?:kontaktiert|angeschrieben|angemailt)\s+werden)" + _DE_SAY_END,
+    r"h(?:o|oe)ren\s+sie\s+(?:bitte\s+)?(?:damit\s+)?auf,?\s+(?:mir|mich|uns)\s+(?:zu\s+(?:schreiben"
     r"|kontaktieren|mailen)|anzuschreiben|(?:e-?mails?|mails|nachrichten)\s+zu\s+(?:schicken|senden))",
     # Not interested, as the whole thought.
     r"(?:(?:ich\s+bin|wir\s+sind|bin|sind)\s+)?nicht\s+interessiert(?:\s+(?:mehr|danke))?"
@@ -371,11 +380,18 @@ _DE_NOT_FINAL_BEFORE = {"nicht", "kein", "wenn", "falls", "ob", "sobald", "warum
                         "weshalb", "bevor", "dass", "bekomme", "bekommen", "bekommt", "erhalte",
                         "erhalten", "erhalt", "kriege", "kriegen", "ist", "sind", "seid", "war",
                         "waren", "nie", "noch"}
+# What follows a match that makes it "not now", "not like this" or "not here":
+# "in 3 Monaten gerne wieder", "nicht mehr auf Englisch", "sondern an ...".
 _DE_NOT_FINAL_AFTER_RE = re.compile(
     r"(?<!\w)(?:sondern|lieber|stattdessen|anstatt|per\s+(?:telefon|post|whatsapp|sms)|telefonisch"
     r"|rufen\s+sie|anrufen|hier|bis|vor|montag|dienstag|mittwoch|donnerstag|freitag|samstag|sonntag"
-    r"|woche|monat|januar|februar|marz|april|mai|juni|juli|august|september|oktober|november"
-    r"|dezember|fruhling|sommer|herbst|winter)(?!\w)")
+    r"|wochen?|monate?n?|jahre?n?|nochmal|noch\s+einmal|wieder|sp(?:a|ae)ter|demn(?:a|ae)chst"
+    r"|n(?:a|ae)chste[nmrs]?|englisch|franz(?:o|oe)sisch|italienisch|adresse|kolleg\w*"
+    r"|januar|februar|m(?:a|ae)rz|april|mai|juni|juli|august|september|oktober|november"
+    r"|dezember|fr(?:u|ue)hling|sommer|herbst|winter)(?!\w)")
+# How far around a match its context is read: enough for a sentence, and a
+# bound, so a reply with thousands of held-back matches stays linear.
+_DE_CONTEXT = 300
 # "Nein danke": as with "no thanks". Not "ja oder nein, danke ...", "warum
 # nein", or "nein, danke Ihnen" / "danke für ...".
 GERMAN_NO_THANKS_RE = re.compile(
@@ -386,13 +402,16 @@ GERMAN_NO_THANKS_RE = re.compile(
 def _german_opt_out(text: str):
     """The first German opt-out phrase in _accent_free_lines text that means it."""
     for m in GERMAN_OPT_OUT_RE.finditer(text):
-        line_start = text.rfind("\n", 0, m.start()) + 1
+        lo = max(0, m.start() - _DE_CONTEXT)
+        newline = text.rfind("\n", lo, m.start())
+        line_start = newline + 1 if newline >= 0 else lo
         last = _FR_LAST_WORD_RE.search(text[max(line_start, m.start() - 40):m.start()])
         before = last.group(1).strip("\"«»(-,") if last else ""
         if before in _DE_NOT_FINAL_BEFORE:
             continue
-        sentence_end = re.search(r"[.!?;\n]", text[m.end():])
-        after = text[m.end():m.end() + sentence_end.start()] if sentence_end else text[m.end():]
+        rest = text[m.end():m.end() + _DE_CONTEXT]
+        sentence_end = re.search(r"[.!?;\n]", rest)
+        after = rest[:sentence_end.start()] if sentence_end else rest
         if _DE_NOT_FINAL_AFTER_RE.search(after):
             continue
         return m

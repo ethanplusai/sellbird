@@ -927,6 +927,9 @@ def test_french_lines_that_dont_say_it_stops_or_have_a_link_are_refused():
     "Kein Interesse.", "kein Interesse, danke", "Wir haben kein Interesse.",
     "Ich bin nicht interessiert.", "Nicht interessiert, danke.",
     "Kein Interesse\n\nMax Muster\nTel. 555-0100", "Kein Interesse\nVon meinem iPhone gesendet",
+    "Abmelden, Grüße", "Danke, bitte keine Mails mehr.", "Löschen Sie mich bitte.",
+    "Bitte loeschen Sie meine Adresse.", "Ich moechte nicht mehr kontaktiert werden.",
+    "Hoeren Sie bitte auf, mir zu schreiben.",
 ])
 def test_german_opt_outs(reply):
     assert _opt_out_reason(reply, reply) is not None
@@ -946,6 +949,20 @@ def test_german_opt_outs(reply):
     "Bitte nicht austragen.", "Ich möchte mich nicht abmelden.",
     "Löschen Sie bitte den doppelten Termin.", "Bitte keine Rechnung mehr per Post.",
     "Schicken Sie mir das Angebot", "Abmelden kann ich mich ja jederzeit, oder?",
+    # News, not a request: a lost prospect is silent, so these go to the model.
+    "Ich habe keine Mails mehr von Ihnen bekommen, können Sie das Angebot nochmal senden?",
+    "Seit dem Update kommen keine Mails mehr an.",
+    "Ich bekomme seit Mai keine Mails mehr.", "Leider kommen bei uns keine Mails mehr.",
+    "Wir haben keine Angebote mehr offen, melden Sie sich im neuen Jahr.",
+    # Not now, but later.
+    "Kein Interesse momentan, in 3 Monaten gerne wieder.",
+    "Kein Interesse, melden Sie sich in 6 Monaten nochmal.",
+    "Kein Interesse, erst nächstes Jahr wieder.", "Kein Interesse, in zwei Wochen gerne.",
+    "Schreiben Sie mir bitte nicht mehr auf Englisch.",
+    # Narrowed, not stopped.
+    "Ich möchte keine Werbung, aber ein konkretes Angebot gerne.",
+    "Ich möchte keine Newsletter, nur das Angebot.",
+    "Wir haben kein Interesse\nan SEO, aber die Buchung klingt gut.",
 ])
 def test_german_that_is_not_an_opt_out(reply):
     assert _opt_out_reason(reply, reply) is None
@@ -953,10 +970,12 @@ def test_german_that_is_not_an_opt_out(reply):
 
 def test_a_long_german_reply_is_quick():
     import time
-    text = "bitte nicht austragen sie mich " * 20000
-    started = time.monotonic()
-    _opt_out_reason(text, text)
-    assert time.monotonic() - started < 2
+    for text in ("bitte nicht austragen sie mich " * 20000,
+                 # Thousands of matches that are each held back: every one must stay cheap.
+                 "falls kein interesse. " * 20000):
+        started = time.monotonic()
+        _opt_out_reason(text, text)
+        assert time.monotonic() - started < 2
 
 
 @pytest.mark.asyncio
@@ -983,7 +1002,10 @@ def test_german_opt_out_lines_are_accepted():
                  "Antworten Sie mit STOPP, um sich abzumelden.",
                  "Möchten Sie keine weiteren Mails? Antworten Sie einfach mit «Nein danke».",
                  "Passt das nicht? Sagen Sie es kurz, und ich schreibe Ihnen nicht mehr.",
-                 "Falls das nicht für Sie ist, genügt ein kurzes Nein, dann trage ich Sie aus."):
+                 "Falls das nicht für Sie ist, genügt ein kurzes Nein, dann trage ich Sie aus.",
+                 "Passt es nicht? Dann lasse ich Sie in Ruhe.",
+                 "Eine kurze Antwort genügt, und ich höre auf, Ihnen zu schreiben.",
+                 "Ein Wort genügt, und Sie hören nichts mehr von mir."):
         assert ComplianceConfig(opt_out_line=line).opt_out_line == line
 
 

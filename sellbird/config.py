@@ -556,7 +556,8 @@ _SAYS_IT_STOPS_DE_RE = re.compile(
     r"|\bkein\s+interesse|\bnicht\s+interessiert"
     r"|\b(?:melde|schreibe|kontaktiere|maile)\s+(?:ich\s+)?(?:mich\s+)?(?:ihnen\s+|dir\s+|euch\s+)?"
     r"nicht\s+mehr\b"
-    r"|\bnicht\s+mehr\s+(?:\w+\s+){0,2}?(?:schreib|meld|kontaktier|anschreib|mail)\w*)",
+    r"|\bnicht\s+mehr\s+(?:\w+\s+){0,2}?(?:schreib|meld|kontaktier|anschreib|mail)\w*"
+    r"|\bin\s+ruhe\b|\bh(?:o|oe)re\s+(?:ich\s+)?auf\b|\bnichts\s+mehr\s+von\s+(?:mir|uns)\b)",
     re.IGNORECASE)
 # "Click" in German: "klicken Sie hier, um sich abzumelden".
 _GERMAN_CLICK_RE = re.compile(r"\bklick", re.IGNORECASE)
