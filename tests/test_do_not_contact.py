@@ -226,8 +226,35 @@ def test_www_is_not_stripped_from_a_mailbox():
     assert not do_not_contact_match("www.jane@acme.example", ["jane@acme.example"])
 
 
+# ── A whole top-level domain (".at") ──
+
+def test_a_top_level_domain_entry_blocks_every_address_under_it():
+    # Some countries allow no cold email even between businesses: one entry
+    # keeps every company there out, including ones discovered later.
+    assert do_not_contact_match("info@firma.at", [".at"]) == ".at"
+    assert do_not_contact_match("jane@mail.firma.at", [".at"]) == ".at"
+    assert do_not_contact_domain_match("firma.at", [".at"]) == ".at"
+
+
+def test_a_top_level_domain_entry_blocks_nothing_else():
+    for address in ("info@firma.example", "info@at.example", "info@firma.at.example",
+                    "info@flat", "at@firma.example"):
+        assert do_not_contact_match(address, [".at"]) == "", address
+    assert do_not_contact_domain_match("at.example", [".at"]) == ""
+
+
+def test_a_top_level_domain_entry_is_normalised_by_the_config():
+    entries = ComplianceConfig(do_not_contact=[".AT", "*.de", " .li "]).do_not_contact
+    assert entries == [".at", ".de", ".li"]
+    assert _check("info@firma.de", entries).ok is False
+
+
+def test_a_domain_with_a_leading_dot_is_still_that_domain():
+    assert ComplianceConfig(do_not_contact=[".acme.example"]).do_not_contact == ["acme.example"]
+
+
 @pytest.mark.parametrize("bad", [5, True, [{"domain": "acme.example"}], ["not a domain"],
-                                 ["www.example"], ["example"]])
+                                 ["www.example"], ["example"], ["."], [".a"], [".a_b"]])
 def test_an_entry_that_names_nothing_is_a_config_error(bad):
     """Silently matching nothing is the worst outcome: the user thinks the
     company is protected. A clear error at load time instead."""
