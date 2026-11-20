@@ -14,7 +14,8 @@ product:      { name, description, pricing, key_benefits, objection_responses, o
 icp:          { industries, titles, company_size, geography, hiring_signals, geo_coordinates }
 channels:
   email:      { provider: gmail | microsoft | smtp | instantly, max_daily_sends, per_inbox_daily_cap,
-                require_approval, send_to_risky, min_write_score, max_bounce_rate, follow_ups, warmup, send_window, signature }
+                require_approval, send_to_risky, min_write_score, max_bounce_rate, follow_ups,
+                max_follow_ups, follow_up_delay_days, warmup, send_window, signature }
 usage:        { max_daily_claude_percent, heartbeat_interval_minutes, quiet_hours }
 brain:        { provider: claude | codex, model, reasoning_effort }   # optional; claude by default
 writer:       { humanizer, site_facts, require_tip }   # optional; humanizer true adds one editing pass per batch using ~/.claude/skills/humanizer/SKILL.md
@@ -34,6 +35,12 @@ drafts for: a prospect below it keeps its deliverable address but gets no
 sequence, so Claude calls and sends go to the best matches first.
 
 `follow_ups` (default true) set to `false` makes a campaign stage only its first email on Gmail, Microsoft and SMTP. Steps 2 and 3 are never prepared, so none can go out to someone who has not answered. A reply is still read, and the answer waits in the Outbox for you as usual. The Writer still drafts the whole sequence; the Sender just doesn't stage the later steps.
+
+`max_follow_ups` (0, 1 or 2; default 2) caps how many follow-ups a campaign stages. With 1, only the first reminder is prepared, for markets where one reminder is the polite limit; the Writer still drafts all three emails. `follow_up_delay_days` (1-60; default 0) sets the wait before each follow-up instead of the Writer's 3 and 4 days, both when a follow-up is planned and when it may go. If your `writer.email_rules` describe the follow-up, say the same number of days there so the email reads right.
+
+`compliance.do_not_contact` also takes a whole top-level domain with its leading dot: `.at` keeps every address under `.at` out, including companies discovery finds later. Use it for countries where cold email needs consent even between businesses. A plain word without the dot is still an error.
+
+`compliance.opt_out_line` can be German too ("Kein Interesse? Eine kurze Antwort genügt, dann melde ich mich nicht mehr."), and German replies such as "Bitte austragen", "Kein Interesse." or "Nein danke" are honoured by rule, like the English, Spanish, French and Hebrew ones.
 
 `max_daily_claude_percent` caps whichever subscription `brain.provider` uses (the name predates Codex support).
 
