@@ -338,11 +338,13 @@ def build_server(client_factory: Callable[[], CoreClient] = default_client, *,
         return await guarded(lambda c: c.post("/api/offer/suggest", timeout=MODEL_CALL_TIMEOUT))
 
     @server.tool()
-    async def offer_preview(entry: str) -> dict:
+    async def offer_preview(entry: str, with_rules: bool = False) -> dict:
         """Write one real first email with `entry` as the offer, for one of the
         user's prospects, so they can judge the offer in a real email. Saves and
-        sends nothing."""
-        return await guarded(lambda c: c.post("/api/offer/preview", {"entry": entry},
+        sends nothing. with_rules=True writes it under the user's own email rules
+        (writer.email_rules), as the Writer will: use it when they have rules."""
+        return await guarded(lambda c: c.post("/api/offer/preview",
+                                              {"entry": entry, "with_rules": with_rules},
                                               timeout=MODEL_CALL_TIMEOUT))
 
     @server.tool()

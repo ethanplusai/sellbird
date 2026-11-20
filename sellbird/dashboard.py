@@ -610,9 +610,10 @@ async def preview_offer(request: Request):
     entry = " ".join(str((body or {}).get("entry") or "").split())[:MAX_OFFER_CHARS]
     if not entry:
         return JSONResponse({"ok": False, "message": "Write an offer first."}, status_code=400)
+    with_rules = (body or {}).get("with_rules") is True
     try:
         brain, state, config = await _offer_brain()
-        return await preview_email(brain, state, config, entry)
+        return await preview_email(brain, state, config, entry, with_rules=with_rules)
     except Exception as e:
         logger.warning(f"Offer preview failed: {e}")
         return JSONResponse({"ok": False, "message": "The preview failed. Try again."}, status_code=502)

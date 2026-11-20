@@ -121,9 +121,20 @@ async def preview_prospect(state):
     return best
 
 
-async def preview_email(brain, state, config, entry: str) -> dict:
-    """One first email written with ``entry`` as the offer. Nothing is saved."""
+async def preview_email(brain, state, config, entry: str, with_rules: bool = False) -> dict:
+    """One first email written with ``entry`` as the offer. Nothing is saved.
+
+    By default the operator's email rules (writer.email_rules) stay out, so the
+    offer is judged in Sellbird's own shape. ``with_rules`` writes it the way
+    the Writer will: rules in another language change the whole email."""
     from sellbird.agents.writer import Writer, _names
+    from sellbird.config import EmailRulesError, load_email_rules
+    rules = ""
+    if with_rules:
+        try:
+            rules = load_email_rules(config)
+        except EmailRulesError as e:
+            return {"ok": False, "message": f"Your email rules (writer.email_rules) can't be used: {e}"}
     prospect = await preview_prospect(state)
     if prospect is None:
         return {"ok": False, "message": "No prospects with company facts yet. Find some companies "
@@ -132,7 +143,7 @@ async def preview_email(brain, state, config, entry: str) -> dict:
     trial.product.offer.entry = entry
     writer = Writer(brain, state, trial, None)
     writer.skills = brain.load_skills_for_agent("writer")
-    writer.email_rules = ""
+    writer.email_rules = rules
     draft = await writer._write_personal_email(prospect)
     draft = await writer._keep_to_rules(draft, step=1, names=_names(prospect)) if draft else None
     if not draft:

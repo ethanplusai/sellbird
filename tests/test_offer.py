@@ -39,6 +39,71 @@ async def test_suggestions_survive_a_wrapped_answer():
     assert [i["offer"] for i in ideas] == ["a ranking report"]
 
 
+class _FakeWriter:
+    made = []
+
+    def __init__(self, brain, state, config, env):
+        self.config = config
+        _FakeWriter.made.append(self)
+
+    async def _write_personal_email(self, prospect):
+        return {"subject": "s", "body": "b"}
+
+    async def _keep_to_rules(self, draft, step, names):
+        return draft
+
+
+class _SkillsBrain:
+    def load_skills_for_agent(self, name):
+        return ""
+
+
+def _preview_setup(monkeypatch, tmp_path, rules_text="Schreiben Sie auf Deutsch."):
+    import sellbird.agents.writer as writer_module
+    import sellbird.offer as offer_module
+    rules = tmp_path / "rules.md"
+    rules.write_text(rules_text, encoding="utf-8")
+    prospect = SimpleNamespace(full_name=lambda: "Ana Doe", title="Owner", company="Acme Co")
+
+    async def pick(state):
+        return prospect
+    monkeypatch.setattr(offer_module, "preview_prospect", pick)
+    monkeypatch.setattr(writer_module, "Writer", _FakeWriter)
+    monkeypatch.setattr(writer_module, "_names", lambda p: ())
+    _FakeWriter.made = []
+    config = _config()
+    config.writer = SimpleNamespace(humanizer=False, email_rules=str(rules))
+    return config
+
+
+@pytest.mark.asyncio
+async def test_the_preview_leaves_the_operators_rules_out_by_default(monkeypatch, tmp_path):
+    from sellbird.offer import preview_email
+    config = _preview_setup(monkeypatch, tmp_path)
+    result = await preview_email(_SkillsBrain(), None, config, "a homepage mockup")
+    assert result["ok"] and _FakeWriter.made[-1].email_rules == ""
+
+
+@pytest.mark.asyncio
+async def test_the_preview_can_write_with_the_operators_rules(monkeypatch, tmp_path):
+    # Rules in another language change the whole email; a preview without them
+    # shows an email the operator will never send.
+    from sellbird.offer import preview_email
+    config = _preview_setup(monkeypatch, tmp_path)
+    result = await preview_email(_SkillsBrain(), None, config, "a homepage mockup", with_rules=True)
+    assert result["ok"] and _FakeWriter.made[-1].email_rules == "Schreiben Sie auf Deutsch."
+    assert _FakeWriter.made[-1].config.product.offer.entry == "a homepage mockup"
+
+
+@pytest.mark.asyncio
+async def test_a_preview_with_unusable_rules_says_so(monkeypatch, tmp_path):
+    from sellbird.offer import preview_email
+    config = _preview_setup(monkeypatch, tmp_path, rules_text="")
+    result = await preview_email(_SkillsBrain(), None, config, "a homepage mockup", with_rules=True)
+    assert not result["ok"] and "rules" in result["message"].lower()
+    assert not _FakeWriter.made
+
+
 def test_saving_writes_the_offer_and_keeps_everything_else(tmp_path):
     f = tmp_path / "sellbird.local.yaml"
     f.write_text("persona:\n  name: Maya\nproduct:\n  name: Brightline\n  offer:\n    goal: book_call\n")
