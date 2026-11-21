@@ -88,7 +88,7 @@ async def run_website_stage(state, config=None, limit: int | None = None):
     at all when none is. A found domain feeds PROFILE and the scout on the
     next pass, through the same queries as any other company with a domain.
     """
-    from harvey.collectors.website_finder import run_website_finder
+    from sellbird.collectors.website_finder import run_website_finder
 
     return await run_website_finder(state, config, limit=limit)
 

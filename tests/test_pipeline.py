@@ -295,7 +295,7 @@ async def test_a_cancelled_profile_run_is_closed(state, monkeypatch):
     'running', or the dashboard reports a job that stopped before finishing."""
     import asyncio
 
-    from harvey.collectors import profile as PR
+    from sellbird.collectors import profile as PR
 
     await seed_signal_catalog(state)
     await state.set_signal_status("TECH_STACK", "confirmed")

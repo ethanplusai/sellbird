@@ -46,7 +46,7 @@ from dataclasses import asdict, dataclass, field, fields
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
-from harvey.collectors.cqc import Location
+from sellbird.collectors.cqc import Location
 
 logger = logging.getLogger(__name__)
 

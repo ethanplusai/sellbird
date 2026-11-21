@@ -12,8 +12,8 @@ from pathlib import Path
 import httpx
 import pytest
 
-from harvey.collectors import contracts as C
-from harvey.collectors.cqc import Location
+from sellbird.collectors import contracts as C
+from sellbird.collectors.cqc import Location
 
 TODAY = date(2026, 11, 19)
 

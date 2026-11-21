@@ -49,7 +49,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
-from harvey.collectors.cqc import Location, km_between
+from sellbird.collectors.cqc import Location, km_between
 
 logger = logging.getLogger(__name__)
 

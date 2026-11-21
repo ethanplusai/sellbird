@@ -14,7 +14,7 @@ from xml.sax.saxutils import escape
 import httpx
 import pytest
 
-from harvey.collectors import cqc, rqia
+from sellbird.collectors import cqc, rqia
 
 # ── fixtures: the three spreadsheets ──
 
@@ -64,7 +64,7 @@ ODNI_ROWS = [
     odni("New Dawn Care", "Domiciliary Care Agency (DCA)", postcode="BT0 0AF"),
     # Neither file nor a report knows it yet.
     odni("Fresh Start Care", "Domiciliary Care Agency (DCA)", postcode="BT0 0AG"),
-    # Not adult social care that Harvey sells to: never read.
+    # Not adult social care that Sellbird sells to: never read.
     odni("Smile Dental", "Independent Hospital (IH) - Dental Treatment", postcode="BT0 0AH"),
     odni("Sunny Day Centre", "Day Care Setting (DCS)", postcode="BT0 0AJ"),
 ]
@@ -517,7 +517,7 @@ async def test_latest_report_is_cached_and_quiet_on_failure(tmp_path):
 
 @pytest.mark.asyncio
 async def test_discovery_finds_rqia_services_by_trust_and_nation(locations):
-    from harvey.collectors.discover import PROVIDERS, DiscoveryQuery
+    from sellbird.collectors.discover import PROVIDERS, DiscoveryQuery
     provider = type(PROVIDERS["rqia"])()
     provider._locations = locations
     found = await provider.fetch(None, {}, DiscoveryQuery("care home", "Belfast HSC Trust"))
@@ -539,7 +539,7 @@ async def test_discovery_finds_rqia_services_by_trust_and_nation(locations):
 async def test_writer_uses_the_rqia_report(monkeypatch):
     from types import SimpleNamespace
 
-    from harvey.agents.writer import Writer
+    from sellbird.agents.writer import Writer
 
     async def fake_report(client, service_id, data_dir):
         assert service_id == "011001" and data_dir.name == "rqia"

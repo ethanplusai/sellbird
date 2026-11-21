@@ -2,7 +2,7 @@
 
 When the owner rewrites a draft in the Outbox, the dashboard logs the text it
 replaced (an ``outbox_edited`` action) and the outbox row keeps the new text.
-Once per heartbeat, each new edit is compared with what Harvey wrote, and
+Once per heartbeat, each new edit is compared with what Sellbird wrote, and
 the difference becomes a rule: a new one, or an existing rule updated
 (sharpened, widened, or replaced when the owner changed their mind).
 
@@ -22,8 +22,8 @@ import logging
 import re
 from pathlib import Path
 
-from harvey.paths import PROJECT_ROOT
-from harvey.untrusted import UNTRUSTED_RULE, fence
+from sellbird.paths import PROJECT_ROOT
+from sellbird.untrusted import UNTRUSTED_RULE, fence
 
 logger = logging.getLogger(__name__)
 
@@ -38,10 +38,10 @@ APPLIES = ("all", "email 1", "email 2", "email 3", "reply")
 
 HEADER = """# Learned from your Outbox edits
 
-Harvey writes these rules itself: each time you edit a draft in the Outbox,
+Sellbird writes these rules itself: each time you edit a draft in the Outbox,
 it compares your version with its own and adds a rule here or updates one.
 The writer and the reply handler follow them. Edit, reword or delete any
-line; Harvey keeps your wording. Your own email rules (writer.email_rules)
+line; Sellbird keeps your wording. Your own email rules (writer.email_rules)
 win where the two disagree.
 
 Format: - [which emails] the rule (edits: how many backed it up)
@@ -205,7 +205,7 @@ def learning_prompt(rules: list[dict], edits: list[dict]) -> str:
         which = "a reply" if e["kind"] == "reply" else f"email {e['step'] or 1} of a sequence"
         before = f"Subject: {e['old_subject']}\n\n{_clip(e['old_body'])}"
         after = f"Subject: {e['new_subject']}\n\n{_clip(e['new_body'])}"
-        shown.append(f"Edit {i} ({which})\nWhat Harvey wrote:\n"
+        shown.append(f"Edit {i} ({which})\nWhat Sellbird wrote:\n"
                      f"{fence(before, 'draft before the owner edit')}\n"
                      f"What the owner changed it to:\n{fence(after, 'the owner edit')}")
     return f"""You maintain the writing rules a sales email writer follows. The
@@ -273,7 +273,7 @@ async def learn_from_edits(state, brain, path: Path = RULES_PATH) -> int:
         return 0
     rules = load_rules(path)
     result = await brain.think_json(
-        learning_prompt(rules, edits), session_id="harvey-learn-edits",
+        learning_prompt(rules, edits), session_id="sellbird-learn-edits",
         agent="writer", task="learn_from_edits")
     updated = _clean_rules(result)
     if updated is None:

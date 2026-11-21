@@ -21,7 +21,7 @@ Sources
   states no licence for the export; it is public register data.
 * OSCR (Scotland) is deliberately NOT read. Its download page makes every
   user agree "I will not use this information for direct marketing", and
-  Harvey uses what it finds for cold email. Scottish providers come from the
+  Sellbird uses what it finds for cold email. Scottish providers come from the
   Care Inspectorate reader instead.
 
 Matching
@@ -54,7 +54,7 @@ import zipfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from harvey.collectors.cqc import Location, _website
+from sellbird.collectors.cqc import Location, _website
 
 logger = logging.getLogger(__name__)
 
@@ -431,7 +431,7 @@ async def _refresh_ccew(client, data_dir: Path) -> list[Charity]:
         for name, dest in zip(CCEW_FILES, zips):
             logger.info("charities: downloading the CCEW %s extract", name)
             await _download(client, f"{CCEW_BASE}publicextract.{name}.zip", dest)
-        # Minutes of parsing: off the event loop so Harvey keeps running.
+        # Minutes of parsing: off the event loop so Sellbird keeps running.
         return await asyncio.to_thread(read_ccew, *zips)
     finally:
         _remove(*zips)

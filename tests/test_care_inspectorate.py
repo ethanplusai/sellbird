@@ -16,8 +16,8 @@ import zlib
 import httpx
 import pytest
 
-from harvey.collectors import care_inspectorate as ci
-from harvey.collectors import cqc
+from sellbird.collectors import care_inspectorate as ci
+from sellbird.collectors import cqc
 
 HEADER = [
     "CSNumber", "Combined_Service_", "CaseNumber_Combined", "CareService", "Subtype",

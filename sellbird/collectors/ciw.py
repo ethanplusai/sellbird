@@ -34,7 +34,7 @@ from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 
-from harvey.collectors.cqc import CONSENT_NEEDED, Location, search, services_for  # noqa: F401
+from sellbird.collectors.cqc import CONSENT_NEEDED, Location, search, services_for  # noqa: F401
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +92,7 @@ def _int(value: str) -> int:
 
 
 def services_from(row: dict) -> list[str]:
-    """The short service names Harvey searches by, [] for anything that isn't
+    """The short service names Sellbird searches by, [] for anything that isn't
     an adult care service."""
     kind = _clean(row.get("Service type"))
     sub = _clean(row.get("Service sub-type")).lower()
@@ -235,7 +235,7 @@ def read_extract(text: str) -> tuple[list[CiwLocation], dict[str, dict]]:
 
 def registry_people(loc: Location) -> list[dict]:
     """The provider's Responsible Individual(s) for a service, as CIW names them."""
-    from harvey.collectors.cqc import split_registry_name
+    from sellbird.collectors.cqc import split_registry_name
     out, seen = [], set()
     for one in (loc.nominated_individual or "").split(";"):
         name = split_registry_name(one)
@@ -305,7 +305,7 @@ async def load_register(client, data_dir: Path) -> list[CiwLocation]:
                     f.write(chunk)
         text = tmp.read_bytes().decode("utf-8-sig", errors="replace")
         if "Service URN" not in text[:2000]:
-            raise RuntimeError("CIW's data extract no longer has the columns Harvey reads")
+            raise RuntimeError("CIW's data extract no longer has the columns Sellbird reads")
         tmp.replace(path)
     except Exception as e:
         if cache.exists():

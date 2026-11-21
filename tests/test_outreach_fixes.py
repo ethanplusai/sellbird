@@ -26,7 +26,7 @@ def test_possessive_for_other_companies_unchanged():
 # ── company names as a person would say them ──
 
 def test_register_names_are_tidied_for_the_email():
-    from harvey.agents.sender import spoken_company
+    from sellbird.agents.sender import spoken_company
     assert spoken_company("ACME 24 CARE NORTH") == "Acme 24 Care North"
     assert spoken_company("Example Homecare Ltd") == "Example Homecare"
     assert spoken_company("Example Care Solutions - Main Office") == "Example Care Solutions"

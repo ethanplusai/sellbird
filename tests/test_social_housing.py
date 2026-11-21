@@ -15,7 +15,7 @@ from xml.sax.saxutils import escape
 import httpx
 import pytest
 
-from harvey.collectors import social_housing as SH
+from sellbird.collectors import social_housing as SH
 
 ASSETS = "https://assets.publishing.service.gov.uk/media"
 

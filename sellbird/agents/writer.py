@@ -513,11 +513,11 @@ class Writer:
             import importlib
 
             import httpx
-            from harvey.paths import PROJECT_ROOT
-            latest_report = importlib.import_module(f"harvey.collectors.{module}").latest_report
+            from sellbird.paths import PROJECT_ROOT
+            latest_report = importlib.import_module(f"sellbird.collectors.{module}").latest_report
             async with httpx.AsyncClient(
                 timeout=30, follow_redirects=True,
-                headers={"User-Agent": "Mozilla/5.0 (compatible; Harvey)"},
+                headers={"User-Agent": "Mozilla/5.0 (compatible; Sellbird)"},
             ) as client:
                 report = await latest_report(
                     client, service_id, PROJECT_ROOT / "data" / source)
@@ -546,8 +546,8 @@ class Writer:
         if source != "contracts" or not supplier_id:
             return []
         try:
-            from harvey.collectors.contracts import contract_facts
-            from harvey.paths import PROJECT_ROOT
+            from sellbird.collectors.contracts import contract_facts
+            from sellbird.paths import PROJECT_ROOT
             text = contract_facts(PROJECT_ROOT / "data" / "contracts").get(supplier_id, "")
         except Exception as e:
             logger.warning(f"Writer: could not read contract facts: {e}")

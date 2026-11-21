@@ -1,12 +1,12 @@
-"""Learning writing rules from the owner's Outbox edits (harvey.edits)."""
+"""Learning writing rules from the owner's Outbox edits (sellbird.edits)."""
 import os
 import tempfile
 
 import pytest
 import pytest_asyncio
 
-from harvey import edits as E
-from harvey.state import StateManager
+from sellbird import edits as E
+from sellbird.state import StateManager
 
 DRAFT = ("Hi Sam,\n\nI wanted to reach out because training is a big part of running a "
          "care home and many managers find it hard.\n\nWould you be open to a chat?\n\nStewart")

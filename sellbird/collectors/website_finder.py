@@ -6,7 +6,7 @@ services don't either. Without a domain the scout can find no contacts and no
 email pattern, so those companies sit in the database doing nothing.
 
 For each one, this stage runs ONE web search (the company's name plus its town
-or postcode) through a search provider Harvey already supports, then reads the
+or postcode) through a search provider Sellbird already supports, then reads the
 top few results' own pages and asks: is this really them? A page counts as
 theirs only on evidence the register gave us — the name on the page together
 with the postcode, the phone number or a registration/company number, or the
@@ -31,7 +31,7 @@ from urllib.parse import urljoin, urlparse
 
 import httpx
 
-from harvey.collectors.discover import (
+from sellbird.collectors.discover import (
     PROVIDERS,
     DiscoveryQuery,
     ProviderExhausted,
@@ -39,7 +39,7 @@ from harvey.collectors.discover import (
     normalize_domain,
 )
 
-logger = logging.getLogger("harvey.collectors.website_finder")
+logger = logging.getLogger("sellbird.collectors.website_finder")
 
 # Free first: TinyFish costs nothing (30 a minute, 500 an hour), Serper has
 # 2,500 free searches, DataForSEO SERP is paid from the first search.
@@ -307,10 +307,10 @@ class RegisterLookup:
         return records
 
     def _companies_house(self) -> dict:
-        from harvey.collectors.cqc import Location
+        from sellbird.collectors.cqc import Location
         root = self.data_root
         if root is None:
-            from harvey.paths import PROJECT_ROOT
+            from sellbird.paths import PROJECT_ROOT
             root = PROJECT_ROOT / "data"
         out = {}
         for path in sorted((root / "companies_house_sic").glob("*.json")):
@@ -497,14 +497,14 @@ async def run_website_finder(
         return report
 
     if env is None:
-        from harvey.config import load_env
+        from sellbird.config import load_env
         env = load_env().model_dump()
     provider = pick_provider(env, getattr(settings, "provider", "auto"))
     if provider is None:
         _warn_once("nokey", (
             f"Website finder is idle: {report.pending} companies have no website, "
             "and no search key is set. Add TINYFISH_API_KEY (free) or "
-            "SERPER_API_KEY to .env to let Harvey look them up."))
+            "SERPER_API_KEY to .env to let Sellbird look them up."))
         report.stopped = "no search key"
         return report
     report.provider = provider.key
@@ -543,8 +543,8 @@ async def run_website_finder(
     if own_search:
         search_client = httpx.AsyncClient(timeout=SEARCH_TIMEOUT, follow_redirects=True)
     if own_pages:
-        from harvey.collectors.profile import USER_AGENTS
-        from harvey.public_http import public_http_client
+        from sellbird.collectors.profile import USER_AGENTS
+        from sellbird.public_http import public_http_client
         page_client = public_http_client(
             timeout=PAGE_TIMEOUT,
             headers={"User-Agent": USER_AGENTS[0],

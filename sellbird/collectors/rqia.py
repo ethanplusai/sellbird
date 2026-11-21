@@ -45,8 +45,8 @@ from io import BytesIO
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
-from harvey.collectors import cqc
-from harvey.collectors.cqc import CONSENT_NEEDED, search, services_for  # noqa: F401  (same searching as CQC)
+from sellbird.collectors import cqc
+from sellbird.collectors.cqc import CONSENT_NEEDED, search, services_for  # noqa: F401  (same searching as CQC)
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +64,7 @@ REPORT_MAX_AGE_DAYS = 30
 REPORT_CHARS = 2500
 MAX_PDF_BYTES = 20 * 1024 * 1024
 # OpenDataNI refuses requests without a browser-like User-Agent.
-HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; Harvey)"}
+HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; Sellbird)"}
 
 _ODNI_LINK = re.compile(
     r'(https://admin\.opendatani\.gov\.uk/dataset/[^"\s]+/download/[^"\s]+\.xlsx)', re.I)
@@ -80,7 +80,7 @@ _REPORT_SLUG = re.compile(
 _NAME_ID = re.compile(r"[\s\xa0]*\((\d{3,8})\)\s*$")
 _PDF_LINK = re.compile(r'href="(https://www\.rqia\.org\.uk/download/[^"]+\.pdf)"', re.I)
 
-# RQIA's service type -> the short names Harvey stores and searches (the
+# RQIA's service type -> the short names Sellbird stores and searches (the
 # same names as cqc.SERVICE_TYPES). Day care settings, nursing agencies,
 # hospitals and clinics are left out.
 SERVICE_TYPES = {

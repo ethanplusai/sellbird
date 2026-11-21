@@ -1,7 +1,7 @@
 """Care services in the Crown Dependencies: Jersey, Guernsey, the Isle of Man.
 
 None of the three islands is covered by CQC, and each regulates adult care
-under its own law. What each one publishes, and what Harvey can use:
+under its own law. What each one publishes, and what Sellbird can use:
 
 - **Jersey** — the Jersey Care Commission registers care homes, home care and
   adult day care under the Regulation of Care (Jersey) Law 2014 and inspects
@@ -12,7 +12,7 @@ under its own law. What each one publishes, and what Harvey can use:
   this module keeps to. Read here.
 - **Isle of Man** — the Registration and Inspection Unit (Department of Health
   and Social Care) publishes reports as PDFs on gov.im, but gov.im answers
-  automated requests with a bot challenge. Harvey doesn't get around those, so
+  automated requests with a bot challenge. Sellbird doesn't get around those, so
   the island is left out (``ISLANDS["im"]["usable"]`` is False).
 - **Guernsey** — care homes are still registered and inspected by Health &
   Social Care's Registration and Inspection unit under the Nursing and
@@ -44,7 +44,7 @@ from dataclasses import asdict
 from pathlib import Path
 from urllib.parse import quote
 
-from harvey.collectors.cqc import Location, search  # noqa: F401  (search is re-exported)
+from sellbird.collectors.cqc import Location, search  # noqa: F401  (search is re-exported)
 
 logger = logging.getLogger(__name__)
 
@@ -183,7 +183,7 @@ _locks: dict[tuple[int, str], asyncio.Lock] = {}
 async def _get(client, url: str):
     """GET, keeping CRAWL_DELAY seconds between requests to one host."""
     host = re.sub(r"^https?://([^/]+).*", r"\1", url)
-    # A lock belongs to one event loop; Harvey may run several over its life.
+    # A lock belongs to one event loop; Sellbird may run several over its life.
     lock = _locks.setdefault((id(asyncio.get_running_loop()), host), asyncio.Lock())
     async with lock:
         wait = _last_request.get(host, 0) + CRAWL_DELAY - time.monotonic()
@@ -393,7 +393,7 @@ async def latest_report(client, service_id: str, data_dir: Path) -> dict:
 
     ``ratings`` is always {}: none of the island regulators rate services.
     ``manager`` is the Registered Manager as the Commission writes it
-    ("Forename Surname"), or "". {} for an island Harvey can't read, when the
+    ("Forename Surname"), or "". {} for an island Sellbird can't read, when the
     regulator can't be reached, or when there's no report yet. Cached per
     service in data_dir for REPORT_MAX_AGE_DAYS.
     """

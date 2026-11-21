@@ -14,7 +14,7 @@ import zlib
 import httpx
 import pytest
 
-from harvey.collectors import ciw, cqc
+from sellbird.collectors import ciw, cqc
 
 HEADER = [
     "Service URN", "Service name", "Known as", "Service type", "Service sub-type",

@@ -39,7 +39,7 @@ import zlib
 from dataclasses import asdict
 from pathlib import Path
 
-from harvey.collectors.cqc import Location, search  # noqa: F401  (search re-exported)
+from sellbird.collectors.cqc import Location, search  # noqa: F401  (search re-exported)
 
 logger = logging.getLogger(__name__)
 

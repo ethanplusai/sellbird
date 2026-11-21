@@ -1,9 +1,9 @@
-"""The heartbeat's parallel agent runner (harvey.main._run_agents)."""
+"""The heartbeat's parallel agent runner (sellbird.main._run_agents)."""
 import asyncio
 
 import pytest
 
-from harvey import main as M
+from sellbird import main as M
 
 
 async def _returns(value, delay=0.0):

@@ -2,7 +2,7 @@
 
 The public data API (https://developer.company-information.service.gov.uk)
 is free: register, create an application, and put its REST key in .env as
-COMPANIES_HOUSE_API_KEY. It allows 600 requests per 5 minutes; Harvey makes
+COMPANIES_HOUSE_API_KEY. It allows 600 requests per 5 minutes; Sellbird makes
 one per company, and keeps each answer for ``CACHE_DAYS`` in
 ``data/companies_house.json`` so a company is never asked about twice in a
 month.
@@ -22,7 +22,7 @@ from pathlib import Path
 
 import httpx
 
-from harvey.collectors.cqc import split_registry_name
+from sellbird.collectors.cqc import split_registry_name
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +69,7 @@ class CompaniesHouse:
     def __init__(self, api_key: str, cache_path: Path | None = None):
         self.api_key = (api_key or "").strip()
         if cache_path is None:
-            from harvey.paths import PROJECT_ROOT
+            from sellbird.paths import PROJECT_ROOT
             cache_path = PROJECT_ROOT / "data" / "companies_house.json"
         self.cache_path = cache_path
         self._cache: dict | None = None

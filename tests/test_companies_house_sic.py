@@ -7,8 +7,8 @@ import asyncio
 import httpx
 import pytest
 
-from harvey.collectors import companies_house_sic as chs
-from harvey.collectors.cqc import Location
+from sellbird.collectors import companies_house_sic as chs
+from sellbird.collectors.cqc import Location
 
 
 def _item(number, name="Example Home Help Ltd", sic=("88100",), status="active",

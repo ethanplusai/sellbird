@@ -8,7 +8,7 @@ where every company declares what it does as SIC codes.
 
 This reads the public data API's advanced company search
 (``/advanced-search/companies``), with the same free key as
-``harvey.integrations.companies_house`` (``COMPANIES_HOUSE_API_KEY``). It asks
+``sellbird.integrations.companies_house`` (``COMPANIES_HOUSE_API_KEY``). It asks
 for active companies with the care SIC codes, optionally near a place, and
 pages through the answer while staying under the API's limit of 600
 requests per 5 minutes. Each answer is kept for ``CACHE_DAYS`` in
@@ -51,8 +51,8 @@ from typing import Iterable
 
 import httpx
 
-from harvey.collectors.cqc import Location
-from harvey.integrations.companies_house import API, normalize_number
+from sellbird.collectors.cqc import Location
+from sellbird.integrations.companies_house import API, normalize_number
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +61,7 @@ COMPANY_URL = "https://find-and-update.company-information.service.gov.uk/compan
 CACHE_DAYS = 7
 TIMEOUT = httpx.Timeout(60.0)
 
-# The SIC codes a care business uses, and the plain name Harvey stores.
+# The SIC codes a care business uses, and the plain name Sellbird stores.
 SIC_SERVICES = {
     "87100": "residential nursing care",
     "87200": "residential care (learning disability, mental health, substance misuse)",
@@ -77,7 +77,7 @@ DEFAULT_SIC_CODES = ("88100", "88990", "87300", "87100", "87200")
 
 # Company types that are a corporate body, so B2B cold email rules apply.
 # Anything else (overseas entities, royal charters, unregistered bodies)
-# is left out as unlikely to be a care business Harvey can email.
+# is left out as unlikely to be a care business Sellbird can email.
 CORPORATE_TYPES = frozenset({
     "ltd", "private-unlimited", "private-limited-guarant-nsc",
     "private-limited-guarant-nsc-limited-exemption",
@@ -200,7 +200,7 @@ class CompaniesHouseSic:
                  limiter: RateLimiter | None = None, use_cache: bool = True):
         self.api_key = (api_key or "").strip()
         if cache_dir is None and use_cache:
-            from harvey.paths import PROJECT_ROOT
+            from sellbird.paths import PROJECT_ROOT
             cache_dir = PROJECT_ROOT / "data" / "companies_house_sic"
         self.cache_dir = cache_dir if use_cache else None
         self.limiter = limiter or RateLimiter()

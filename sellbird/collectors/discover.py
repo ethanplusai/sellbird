@@ -1232,7 +1232,7 @@ class CQCRegister(DiscoveryProvider):
     living service, with its website, phone, rating, beds, Registered Manager
     and the provider's Nominated Individual and Companies House number. The
     monthly file is downloaded once and kept in data/cqc/ (see
-    harvey.collectors.cqc). A search phrase picks the service types
+    sellbird.collectors.cqc). A search phrase picks the service types
     ("home care agency" -> domiciliary care), a city's coordinate the radius.
     """
 
@@ -1258,14 +1258,14 @@ class CQCRegister(DiscoveryProvider):
 
     async def _register(self, client):
         if self._locations is None:
-            from harvey.collectors import cqc
-            from harvey.paths import PROJECT_ROOT
+            from sellbird.collectors import cqc
+            from sellbird.paths import PROJECT_ROOT
             data_dir = self.data_dir or (PROJECT_ROOT / "data" / "cqc")
             self._locations = await cqc.load_register(client, data_dir)
         return self._locations
 
     async def fetch(self, client, env, query):
-        from harvey.collectors import cqc
+        from sellbird.collectors import cqc
         if not cqc.services_for(query.term):
             raise RuntimeError(
                 f"The CQC register has no service type for {query.term!r}. It "
@@ -1554,7 +1554,7 @@ class ScavioSearch(ScavioProvider):
 
 # ── The other UK registers ────────────────────────────────────────────
 #
-# Each regulator's reader (harvey.collectors.<module>) returns cqc.Location
+# Each regulator's reader (sellbird.collectors.<module>) returns cqc.Location
 # records. Most have no coordinates, so these providers search by place
 # name: a nation ("Scotland") means the whole register, anything else is
 # matched against the town, council, address and postcode area.
@@ -1576,7 +1576,7 @@ def register_place_matches(loc, place: str) -> bool:
 
 
 class RegisterProvider(DiscoveryProvider):
-    """A free regulator register read by ``harvey.collectors.<module>``."""
+    """A free regulator register read by ``sellbird.collectors.<module>``."""
 
     kind = "listings"
     needs_coordinates = False
@@ -1590,11 +1590,11 @@ class RegisterProvider(DiscoveryProvider):
 
     def _mod(self):
         import importlib
-        return importlib.import_module(f"harvey.collectors.{self.module}")
+        return importlib.import_module(f"sellbird.collectors.{self.module}")
 
     async def _register(self, client):
         if self._locations is None:
-            from harvey.paths import PROJECT_ROOT
+            from sellbird.paths import PROJECT_ROOT
             data_dir = self.data_dir or (PROJECT_ROOT / "data" / self.key)
             self._locations = await self._mod().load_register(client, data_dir)
         return self._locations
@@ -1610,7 +1610,7 @@ class RegisterProvider(DiscoveryProvider):
     def _people(self, loc) -> tuple:
         fn = getattr(self._mod(), "registry_people", None)
         if fn is None:
-            from harvey.collectors import cqc
+            from sellbird.collectors import cqc
             fn = cqc.registry_people
         try:
             return tuple(fn(loc))
@@ -1618,7 +1618,7 @@ class RegisterProvider(DiscoveryProvider):
             return ()
 
     def _search(self, locations, query):
-        from harvey.collectors import cqc
+        from sellbird.collectors import cqc
         wanted = cqc.services_for(query.term)
         for loc in locations:
             if wanted and not wanted.intersection(loc.services):
@@ -1627,7 +1627,7 @@ class RegisterProvider(DiscoveryProvider):
                 yield loc
 
     async def fetch(self, client, env, query):
-        from harvey.collectors import cqc
+        from sellbird.collectors import cqc
         locations = await self._register(client)
         out, consent = [], 0
         for loc in self._search(locations, query):
@@ -1773,7 +1773,7 @@ class CompaniesHouseSicProvider(DiscoveryProvider):
     free_tier = "600 requests per 5 minutes"
     signup_url = "https://developer.company-information.service.gov.uk/"
     env_keys = ("companies_house_api_key",)
-    caveat = ("No websites or emails: Harvey has to find each website itself. The "
+    caveat = ("No websites or emails: Sellbird has to find each website itself. The "
               "place is the registered office, often an accountant's address.")
 
     def __init__(self):
@@ -1782,8 +1782,8 @@ class CompaniesHouseSicProvider(DiscoveryProvider):
 
     async def _known_numbers(self, client):
         if self._known is None:
-            from harvey.collectors import cqc
-            from harvey.paths import PROJECT_ROOT
+            from sellbird.collectors import cqc
+            from sellbird.paths import PROJECT_ROOT
             try:
                 regs = await cqc.load_register(client, PROJECT_ROOT / "data" / "cqc")
             except Exception:
@@ -1792,8 +1792,8 @@ class CompaniesHouseSicProvider(DiscoveryProvider):
         return self._known
 
     async def fetch(self, client, env, query):
-        from harvey.collectors import companies_house_sic as chs
-        from harvey.paths import PROJECT_ROOT
+        from sellbird.collectors import companies_house_sic as chs
+        from sellbird.paths import PROJECT_ROOT
         place = (query.location or "").split(",")[0].strip()
         if place.lower() in NATION_NAMES:
             place = ""

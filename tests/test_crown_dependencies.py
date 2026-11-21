@@ -13,8 +13,8 @@ import zlib
 import httpx
 import pytest
 
-from harvey.collectors import cqc
-from harvey.collectors import crown_dependencies as CD
+from sellbird.collectors import cqc
+from sellbird.collectors import crown_dependencies as CD
 
 
 @pytest.fixture(autouse=True)

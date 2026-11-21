@@ -14,7 +14,7 @@ import zipfile
 import httpx
 import pytest
 
-from harvey.collectors import charities as C
+from sellbird.collectors import charities as C
 
 # ── fixtures ─────────────────────────────────────────────────────────────
 

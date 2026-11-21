@@ -14,11 +14,11 @@ import httpx
 import pytest
 import pytest_asyncio
 
-from harvey.collectors import cqc
-from harvey.collectors import discover as D
-from harvey.integrations import companies_house as CH
-from harvey.signals import SIGNAL_CATALOG, seed_signal_catalog
-from harvey.state import StateManager
+from sellbird.collectors import cqc
+from sellbird.collectors import discover as D
+from sellbird.integrations import companies_house as CH
+from sellbird.signals import SIGNAL_CATALOG, seed_signal_catalog
+from sellbird.state import StateManager
 
 HEADER = [
     "Location ID", "Dormant (Y/N)", "Care home?", "Location Name",
@@ -356,9 +356,9 @@ async def test_no_key_means_no_request(tmp_path):
 
 @pytest.mark.asyncio
 async def test_scout_reads_registry_people_and_directors(state, tmp_path, monkeypatch):
-    from harvey.agents.scout import Scout
-    from harvey.config import EnvConfig
-    from harvey.models import Company
+    from sellbird.agents.scout import Scout
+    from sellbird.config import EnvConfig
+    from sellbird.models import Company
 
     company_id = await state.add_company(Company(name="Willow Lodge", domain="willowlodge.example"))
     await state.add_observations([

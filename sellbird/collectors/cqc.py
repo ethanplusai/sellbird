@@ -42,7 +42,7 @@ _MAX_REPEAT = 300
 _FILE_LINK = re.compile(
     r'href="(https://www\.cqc\.org\.uk/[^"]*HSCA_Active_Locations\.ods)"', re.I)
 
-# Service type columns -> the short names Harvey stores and searches.
+# Service type columns -> the short names Sellbird stores and searches.
 SERVICE_TYPES = {
     "Service type - Care home service with nursing": "nursing home",
     "Service type - Care home service without nursing": "care home",

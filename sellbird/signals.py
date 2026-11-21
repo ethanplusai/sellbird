@@ -153,7 +153,7 @@ SIGNAL_CATALOG: list[dict] = [
         "label": "Companies House number",
         "description": (
             "The provider's UK company number, from the register that listed "
-            "it. With a Companies House key, Harvey reads the company's "
+            "it. With a Companies House key, Sellbird reads the company's "
             "current directors from it."
         ),
         "category": "discovery",
@@ -166,7 +166,7 @@ SIGNAL_CATALOG: list[dict] = [
         "code": "WEBSITE_FOUND",
         "label": "Website found by search",
         "description": (
-            "Harvey searched the web for a company the register listed without "
+            "Sellbird searched the web for a company the register listed without "
             "a website, and found its own site: the name on the page together "
             "with the postcode, phone or registration number. The value is how "
             "sure the match is (0 when nothing was sure enough to save)."

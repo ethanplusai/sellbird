@@ -14,12 +14,12 @@ import httpx
 import pytest
 import pytest_asyncio
 
-from harvey.collectors import website_finder as W
-from harvey.collectors.cqc import Location
-from harvey.config import WebsiteFinderConfig
-from harvey.models import Company
-from harvey.signals import SIGNAL_CATALOG, seed_signal_catalog
-from harvey.state import StateManager
+from sellbird.collectors import website_finder as W
+from sellbird.collectors.cqc import Location
+from sellbird.config import WebsiteFinderConfig
+from sellbird.models import Company
+from sellbird.signals import SIGNAL_CATALOG, seed_signal_catalog
+from sellbird.state import StateManager
 
 pytestmark = pytest.mark.filterwarnings("ignore::DeprecationWarning")
 
@@ -242,7 +242,7 @@ async def test_no_key_does_nothing_and_says_so_once(state, caplog):
     def boom(request):
         raise AssertionError("no request may be made without a key")
     search = httpx.AsyncClient(transport=httpx.MockTransport(boom))
-    with caplog.at_level(logging.INFO, logger="harvey.collectors.website_finder"):
+    with caplog.at_level(logging.INFO, logger="sellbird.collectors.website_finder"):
         for _ in range(3):
             report = await W.run_website_finder(state, Cfg(), env={},
                                                 search_client=search, page_client=search)
