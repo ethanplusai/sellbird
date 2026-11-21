@@ -118,10 +118,16 @@ def by_id(parsed):
     return {loc.id: loc for loc in parsed[0]}
 
 
-def test_keeps_only_active_public_adult_services(by_id):
+def test_keeps_only_active_adult_services(by_id):
     assert set(by_id) == {"CS2001000001", "CS2001000003", "CS2001000004",
                           "CS2001000005", "CS2001000006", "CS2001000007",
-                          "CS2001000012", "CS2001000013"}
+                          "CS2001000010", "CS2001000012", "CS2001000013"}
+
+
+def test_unlisted_services_are_kept_and_flagged(by_id, parsed):
+    assert by_id["CS2001000010"].services == ["housing support"]
+    assert parsed[1]["CS2001000010"]["unlisted"] is True
+    assert parsed[1]["CS2001000001"]["unlisted"] is False
 
 
 def test_location_fields(by_id):
@@ -243,7 +249,7 @@ async def test_load_register_downloads_then_uses_the_local_copy(tmp_path):
     seen = []
     async with _register_client(seen) as client:
         locs = await ci.load_register(client, tmp_path)
-        assert len(locs) == 8
+        assert len(locs) == 9
         assert seen == [ci.DATA_PAGE, LIBRARY_URL, CSV_URL]
         again = await ci.load_register(client, tmp_path)
     assert len(seen) == 3                                    # no second download
@@ -261,7 +267,7 @@ async def test_an_old_copy_beats_none(tmp_path):
     seen = []
     async with _register_client(seen, fail=True) as client:
         locs = await ci.load_register(client, tmp_path)
-    assert seen and len(locs) == 8
+    assert seen and len(locs) == 9
 
 
 @pytest.mark.asyncio
