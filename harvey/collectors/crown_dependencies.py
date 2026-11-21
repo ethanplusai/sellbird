@@ -246,14 +246,37 @@ def load_cache(path: Path) -> list[Location]:
     return [Location(**item) for item in json.loads(path.read_text(encoding="utf-8"))]
 
 
+def known_organisations(locations: list[Location]) -> list[Location]:
+    """Only the services whose provider is known to be an organisation.
+
+    The Commission doesn't publish a provider's legal form, so a blank
+    ``ownership`` could be a sole trader or partnership, who need consent
+    before a cold email (PECR). They're left out, the same as CQC's
+    Individual and Partnership providers.
+    """
+    return [loc for loc in locations if loc.ownership == "Organisation"]
+
+
 async def load_register(client, data_dir: Path) -> list[Location]:
     """Adult care services across the Crown Dependencies (Jersey only today;
-    see ISLANDS for why the others are left out).
+    see ISLANDS for why the others are left out), run by a provider known to
+    be an organisation (see ``known_organisations``).
 
     From the local copy when it's fresh, else read again. An old copy is used
     with a warning when the Commission can't be reached; with no copy at all
-    it raises RuntimeError with a plain reason.
+    it raises RuntimeError with a plain reason. The copy keeps every service,
+    so the filter can change without reading the Commission again.
     """
+    everything = await _load_everything(client, data_dir)
+    kept = known_organisations(everything)
+    if len(kept) < len(everything):
+        logger.info("crown dependencies: %d services left out because the provider "
+                    "could be a sole trader or partnership (PECR)",
+                    len(everything) - len(kept))
+    return kept
+
+
+async def _load_everything(client, data_dir: Path) -> list[Location]:
     cache = data_dir / CACHE_FILE
     if _fresh(cache):
         return load_cache(cache)
