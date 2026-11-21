@@ -172,8 +172,6 @@ def location_from_row(row: dict) -> Location | None:
         return None
     if (row.get("ServiceStatus") or "").strip() != "Active" or not row.get("CSNumber"):
         return None
-    if (row.get("PublicList") or "").strip() == "No":
-        return None
     services = services_from_row(row)
     if not services:
         return None
@@ -218,7 +216,10 @@ def read_services(text: str) -> tuple[list[Location], dict[str, dict]]:
 
     ``extras`` holds what Location has no field for, by service number:
     ``email`` (the service's registered contact address), ``grades``
-    ({key question: 1-6}), ``graded`` (date) and ``requirements``.
+    ({key question: 1-6}), ``graded`` (date), ``requirements`` and
+    ``unlisted``: True for a service the Care Inspectorate leaves off its
+    public search (often a confidential address, such as a refuge), so
+    don't show or write to its address.
     """
     rows = list(csv.DictReader(io.StringIO(text)))
     by_id: dict[str, Location] = {}
@@ -234,6 +235,7 @@ def read_services(text: str) -> tuple[list[Location], dict[str, dict]]:
             "grades": grades_from_row(row),
             "graded": (row.get("Publication_of_Latest_Grading") or "").strip(),
             "requirements": requirements_from_row(row),
+            "unlisted": (row.get("PublicList") or "").strip() == "No",
         }
         other = (row.get("CaseNumber_Combined") or "").strip()
         if other and other != loc.id:
@@ -251,6 +253,7 @@ def read_services(text: str) -> tuple[list[Location], dict[str, dict]]:
         ex["email"] = ex["email"] or dx["email"]
         ex["grades"] = ex["grades"] or dx["grades"]
         ex["requirements"] = ex["requirements"] or dx["requirements"]
+        ex["unlisted"] = ex["unlisted"] or dx["unlisted"]
         del by_id[drop]
     out = list(by_id.values())
     per_provider: dict[str, int] = {}
@@ -300,7 +303,7 @@ def load_cache(path: Path) -> list[Location]:
 
 
 def service_extras(data_dir: Path) -> dict[str, dict]:
-    """{service number: {"email", "grades", "graded", "requirements"}} from
+    """{service number: {"email", "grades", "graded", "requirements", "unlisted"}} from
     the local copy ({} before the first download)."""
     try:
         return _read_cache(data_dir / CACHE_NAME).get("extras", {})
