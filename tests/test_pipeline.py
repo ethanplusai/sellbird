@@ -287,3 +287,33 @@ async def test_exclusions_also_read_the_value(state):
 
     # Only A actually lacks booking, so excluding it leaves B.
     assert await state.cohort(["NO_SCHEMA_MARKUP"], exclude=["NO_ONLINE_BOOKING"]) == [b]
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_profile_run_is_closed(state, monkeypatch):
+    """The heartbeat's time limit cancels profiling. The run must not stay
+    'running', or the dashboard reports a job that stopped before finishing."""
+    import asyncio
+
+    from sellbird.collectors import profile as PR
+
+    await seed_signal_catalog(state)
+    await state.set_signal_status("TECH_STACK", "confirmed")
+
+    async def hang(self, companies, run_id=""):
+        await asyncio.sleep(3600)
+    monkeypatch.setattr(PR.ProfileCollector, "run", hang)
+
+    task = asyncio.create_task(PR.profile_companies(
+        state, [{"id": "c1", "domain": "example.com"}]))
+    for _ in range(200):  # until the run has started and the collector hangs
+        if await state.get_runs():
+            break
+        await asyncio.sleep(0.01)
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    runs = await state.get_runs()
+    assert runs[0]["stage"] == "profile"
+    assert runs[0]["status"] == "stale"

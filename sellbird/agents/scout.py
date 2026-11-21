@@ -37,6 +37,7 @@ import httpx
 from bs4 import BeautifulSoup
 
 from sellbird.brain import Brain
+from sellbird.collectors import cqc as cqc_mod
 from sellbird.collectors import people as people_mod
 from sellbird.collectors.discover import site_name_from_html
 from sellbird.collectors.profile import _reads_like_title, fold_accents, looks_like_challenge
@@ -46,6 +47,7 @@ from sellbird.integrations.email_finder import (
     DEFAULT_PATTERN, SMALL_BUSINESS_PATTERN, find_email, site_email_evidence,
     verify_published_address,
 )
+from sellbird.integrations.companies_house import CompaniesHouse
 from sellbird.integrations.linkedin import LinkedInAutomation
 from sellbird.models.company import Company
 from sellbird.models.prospect import COMPANY_INBOX_SOURCE, Prospect
@@ -88,7 +90,7 @@ MAX_CONTACTS_PER_COMPANY = 2
 # source. Otherwise first.last@, and verification decides. (first@ also
 # collides as a company grows: two Johns.)
 SMALL_COMPANY_MAX = 20
-LOCAL_BUSINESS_SOURCES = ("discover:osm", "discover:dataforseo_listings")
+LOCAL_BUSINESS_SOURCES = ("discover:osm", "discover:dataforseo_listings", "discover:cqc")
 
 # Company-inbox fallback: pages that publish a general address, and the
 # only mailboxes it will use, most likely read by the owner first. An
@@ -1648,12 +1650,25 @@ Respond ONLY with the JSON array."""
         signal_note: str = "",
         source: str = "company_website",
     ) -> list[Prospect]:
-        """Team-page scrape → ICP-matched, email-resolved, deduped prospects."""
+        """Team-page scrape → ICP-matched, email-resolved, deduped prospects.
+
+        People a public register names (a CQC Registered Manager, a
+        Companies House director) come first: they are confirmed, current,
+        and often the only names a small care provider's site doesn't give.
+        """
+        registry = await self._registry_people(company_id)
         try:
             team_members = await self._scrape_team_page(domain)
         except Exception as e:
             logger.debug(f"Team scrape failed for {domain}: {e}")
-            return []
+            if not registry:
+                return []
+            team_members = []
+        if registry:
+            named = {f"{m['first_name']} {m['last_name']}".lower() for m in registry}
+            team_members = registry + [
+                m for m in team_members
+                if f"{m.get('first_name', '')} {m.get('last_name', '')}".lower() not in named]
 
         contacts: list[Prospect] = []
         named_on_site = False
@@ -1718,6 +1733,43 @@ Respond ONLY with the JSON array."""
             if inbox:
                 contacts.append(inbox)
         return contacts
+
+    # Who to write to first among registry people. In a care service the
+    # Registered Manager runs training day to day; the Nominated Individual
+    # and directors sign it off.
+    REGISTRY_RANK = {"registered manager": 1000, "nominated individual": 950,
+                     "director": 900}
+
+    async def _registry_people(self, company_id: str) -> list[dict]:
+        """People public registers name for this company, likeliest first."""
+        if not company_id:
+            return []
+        try:
+            rows = await self.state.get_observations(
+                company_id=company_id, signal_code="REGISTRY_VERIFIED", limit=50)
+            people = cqc_mod.people_from_observations(rows)
+        except Exception as e:
+            logger.debug(f"Registry people lookup failed for {company_id}: {e}")
+            people = []
+        key = getattr(getattr(self, "env", None), "companies_house_api_key", "") or ""
+        if key:
+            try:
+                numbers = await self.state.get_observations(
+                    company_id=company_id, signal_code="COMPANY_NUMBER",
+                    latest_only=True, limit=1)
+                number = numbers[0].get("value_text") if numbers else ""
+                if number:
+                    directors = await CompaniesHouse(key).directors(number)
+                    known = {f"{p['first_name']} {p['last_name']}".lower() for p in people}
+                    people += [d for d in directors
+                               if f"{d['first_name']} {d['last_name']}".lower() not in known]
+            except Exception as e:
+                logger.debug(f"Companies House lookup failed for {company_id}: {e}")
+        for p in people:
+            p["rank"] = self.REGISTRY_RANK.get((p.get("title") or "").lower(), 800)
+            p.setdefault("owner", False)
+            p["evidence"] = f"{p.get('title')} ({p.get('source') or 'public register'})"
+        return sorted(people, key=lambda p: -p["rank"])
 
     async def _observe_likely_owner(self, company_id: str, member: dict):
         """Record LIKELY_OWNER for a company — only when the user confirmed

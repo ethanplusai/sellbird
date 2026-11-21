@@ -81,6 +81,18 @@ async def run_profile_stage(
     return len(pending), observations, run_id
 
 
+async def run_website_stage(state, config=None, limit: int | None = None):
+    """Find websites for a small batch of companies stored without one.
+
+    One web search per company, through whichever search key is set; nothing
+    at all when none is. A found domain feeds PROFILE and the scout on the
+    next pass, through the same queries as any other company with a domain.
+    """
+    from sellbird.collectors.website_finder import run_website_finder
+
+    return await run_website_finder(state, config, limit=limit)
+
+
 async def run_prospecting(
     state,
     config,

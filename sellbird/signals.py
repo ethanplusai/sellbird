@@ -133,6 +133,50 @@ SIGNAL_CATALOG: list[dict] = [
         "cost_note": "included in the business listing lookup",
         "confidence_floor": 0.0,
     },
+    {
+        "code": "CQC_RATING",
+        "label": "CQC rating",
+        "description": (
+            "The Care Quality Commission's latest overall rating for an "
+            "English care service: Outstanding, Good, Requires improvement or "
+            "Inadequate. A service rated below Good has an action plan to "
+            "show its next inspector."
+        ),
+        "category": "discovery",
+        "value_type": "text",
+        "collector": "discover",
+        "cost_note": "free (CQC register)",
+        "confidence_floor": 0.0,
+    },
+    {
+        "code": "COMPANY_NUMBER",
+        "label": "Companies House number",
+        "description": (
+            "The provider's UK company number, from the register that listed "
+            "it. With a Companies House key, Sellbird reads the company's "
+            "current directors from it."
+        ),
+        "category": "discovery",
+        "value_type": "text",
+        "collector": "discover",
+        "cost_note": "free (CQC register)",
+        "confidence_floor": 0.0,
+    },
+    {
+        "code": "WEBSITE_FOUND",
+        "label": "Website found by search",
+        "description": (
+            "Sellbird searched the web for a company the register listed without "
+            "a website, and found its own site: the name on the page together "
+            "with the postcode, phone or registration number. The value is how "
+            "sure the match is (0 when nothing was sure enough to save)."
+        ),
+        "category": "discovery",
+        "value_type": "num",
+        "collector": "find_website",
+        "cost_note": "~$0.001 per company on Serper (2,500 free), $0.002 on DataForSEO; free with TinyFish",
+        "confidence_floor": 0.0,
+    },
 
     # ── Profile: what they are (free — HTML Sellbird already fetches) ──
     {
@@ -324,7 +368,8 @@ SIGNAL_CATALOG: list[dict] = [
         "label": "Confirmed in a public registry",
         "description": (
             "The person was confirmed in an authoritative public registry "
-            "(licensing board, professional registry). Also filters out "
+            "(licensing board, professional registry, a CQC Registered Manager "
+            "or Nominated Individual, a Companies House director). Also filters out "
             "scraping artifacts — a name that matches nothing usually wasn't a person."
         ),
         "category": "people",

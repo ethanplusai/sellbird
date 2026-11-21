@@ -372,6 +372,11 @@ class Business:
     source_url: str = ""
     provider: str = ""
     raw_title: str = ""             # SERP evidence for junk filtering before normalization
+    # From a public register (CQC): the people it names, with their role,
+    # as {"first_name", "last_name", "title", "source", "evidence_url"}.
+    people: tuple[dict, ...] = ()
+    company_number: str = ""         # Companies House, when the register gives it
+    register_rating: str = ""        # the regulator's latest rating ("Good")
 
     def identity(self) -> str:
         return self.domain or self.external_id
@@ -1098,6 +1103,15 @@ class OpenStreetMap(DiscoveryProvider):
         "attorney": ['office=lawyer'],
         "contractor": ['craft=builder', 'office=construction_company'],
         "landscap": ['craft=gardener', 'shop=garden_centre'],
+        # Adult social care. Care homes are amenity=social_facility with the
+        # kind in social_facility=*; older edits still use amenity=nursing_home.
+        # Home care (domiciliary) agencies are offices OSM barely maps, so
+        # they stay unmapped and go to a listings provider.
+        "nursing home": ['social_facility=nursing_home', 'amenity=nursing_home'],
+        "care home": ['social_facility=nursing_home',
+                      'social_facility=assisted_living', 'amenity=nursing_home'],
+        "supported living": ['social_facility=group_home',
+                             'social_facility=assisted_living'],
         # Spanish terms
         "ferreter": ['shop=hardware', 'shop=doityourself'],
         "supermercado": ['shop=supermarket'],
@@ -1201,12 +1215,90 @@ class OpenStreetMap(DiscoveryProvider):
                 address=" ".join(x for x in (tags.get("addr:housenumber"),
                                              tags.get("addr:street")) if x),
                 location=city or query.location,
-                category=tags.get("craft") or tags.get("shop") or tags.get("office") or "",
+                category=(tags.get("craft") or tags.get("shop") or tags.get("office")
+                          or tags.get("social_facility") or ""),
                 has_website=bool(site),
                 external_id=f"osm:{el.get('type')}/{el.get('id')}",
                 source_url=f"https://www.openstreetmap.org/{el.get('type')}/{el.get('id')}",
                 provider=self.key,
             ))
+        return out
+
+
+class CQCRegister(DiscoveryProvider):
+    """England's adult social care register (Care Quality Commission). Free.
+
+    Every registered care home, nursing home, home care agency and supported
+    living service, with its website, phone, rating, beds, Registered Manager
+    and the provider's Nominated Individual and Companies House number. The
+    monthly file is downloaded once and kept in data/cqc/ (see
+    sellbird.collectors.cqc). A search phrase picks the service types
+    ("home care agency" -> domiciliary care), a city's coordinate the radius.
+    """
+
+    key = "cqc"
+    label = "CQC register (England care services)"
+    kind = "listings"
+    needs_coordinates = True
+    blurb = ("The official register of every care home, home care agency and "
+             "supported living service in England, with the Registered Manager's "
+             "name. Free, no key.")
+    cost_note = "free"
+    free_tier = "unlimited (Open Government Licence)"
+    signup_url = "https://www.cqc.org.uk/about-us/transparency/using-cqc-data"
+    env_keys = ()
+    caveat = ("England only, adult social care only. The first run downloads "
+              "about 24 MB and takes a minute; later runs read the local copy. "
+              "Sole traders and partnerships are left out: under PECR they need "
+              "consent before a cold email.")
+
+    def __init__(self, data_dir=None):
+        self.data_dir = data_dir
+        self._locations = None
+
+    async def _register(self, client):
+        if self._locations is None:
+            from sellbird.collectors import cqc
+            from sellbird.paths import PROJECT_ROOT
+            data_dir = self.data_dir or (PROJECT_ROOT / "data" / "cqc")
+            self._locations = await cqc.load_register(client, data_dir)
+        return self._locations
+
+    async def fetch(self, client, env, query):
+        from sellbird.collectors import cqc
+        if not cqc.services_for(query.term):
+            raise RuntimeError(
+                f"The CQC register has no service type for {query.term!r}. It "
+                f"answers care home, nursing home, home care / domiciliary care, "
+                f"supported living, extra care and shared lives.")
+        locations = await self._register(client)
+        out, consent = [], 0
+        for loc in cqc.search(locations, query.term, query.location, query.coordinate):
+            if loc.ownership in cqc.CONSENT_NEEDED:
+                consent += 1
+                continue
+            site = loc.website or loc.provider_website
+            out.append(Business(
+                name=loc.name,
+                domain=normalize_domain(site),
+                website=site,
+                phone=loc.phone or loc.provider_phone,
+                address=", ".join(x for x in (loc.address, loc.postcode) if x),
+                location=loc.city or loc.local_authority or query.location,
+                category=", ".join(loc.services),
+                has_website=bool(site),
+                external_id=f"cqc:{loc.id}",
+                source_url=loc.url,
+                provider=self.key,
+                people=tuple(cqc.registry_people(loc)),
+                company_number=loc.company_number,
+                register_rating=loc.rating,
+            ))
+            if len(out) >= query.limit:
+                break
+        if consent:
+            logger.info("cqc: %d sole traders/partnerships left out for %r (PECR)",
+                        consent, query.keyword())
         return out
 
 
@@ -1459,9 +1551,285 @@ class ScavioSearch(ScavioProvider):
         return out
 
 
+
+# ── The other UK registers ────────────────────────────────────────────
+#
+# Each regulator's reader (sellbird.collectors.<module>) returns cqc.Location
+# records. Most have no coordinates, so these providers search by place
+# name: a nation ("Scotland") means the whole register, anything else is
+# matched against the town, council, address and postcode area.
+
+NATION_NAMES = {"england", "scotland", "wales", "northern ireland", "uk",
+                "united kingdom", "isle of man", "jersey", "guernsey"}
+
+
+def register_place_matches(loc, place: str) -> bool:
+    first = (place or "").split(",")[0].strip().lower()
+    if not first or first in NATION_NAMES:
+        return True
+    fields = (getattr(loc, "city", ""), getattr(loc, "local_authority", ""),
+              getattr(loc, "address", ""))
+    if any(first in (f or "").lower() for f in fields):
+        return True
+    area = (getattr(loc, "postcode", "") or "").lower().split(" ")[0]
+    return bool(area) and area == first
+
+
+class RegisterProvider(DiscoveryProvider):
+    """A free regulator register read by ``sellbird.collectors.<module>``."""
+
+    kind = "listings"
+    needs_coordinates = False
+    cost_note = "free"
+    env_keys = ()
+    module = ""
+
+    def __init__(self, data_dir=None):
+        self.data_dir = data_dir
+        self._locations = None
+
+    def _mod(self):
+        import importlib
+        return importlib.import_module(f"sellbird.collectors.{self.module}")
+
+    async def _register(self, client):
+        if self._locations is None:
+            from sellbird.paths import PROJECT_ROOT
+            data_dir = self.data_dir or (PROJECT_ROOT / "data" / self.key)
+            self._locations = await self._mod().load_register(client, data_dir)
+        return self._locations
+
+    def _url(self, loc) -> str:
+        mod = self._mod()
+        for name in ("url", "location_url", "service_url"):
+            fn = getattr(mod, name, None)
+            if callable(fn):
+                return fn(loc.id)
+        return getattr(loc, "url", "")
+
+    def _people(self, loc) -> tuple:
+        fn = getattr(self._mod(), "registry_people", None)
+        if fn is None:
+            from sellbird.collectors import cqc
+            fn = cqc.registry_people
+        try:
+            return tuple(fn(loc))
+        except Exception:
+            return ()
+
+    def _search(self, locations, query):
+        from sellbird.collectors import cqc
+        wanted = cqc.services_for(query.term)
+        for loc in locations:
+            if wanted and not wanted.intersection(loc.services):
+                continue
+            if register_place_matches(loc, query.location):
+                yield loc
+
+    async def fetch(self, client, env, query):
+        from sellbird.collectors import cqc
+        locations = await self._register(client)
+        out, consent = [], 0
+        for loc in self._search(locations, query):
+            if loc.ownership in cqc.CONSENT_NEEDED:
+                consent += 1
+                continue
+            site = loc.website or loc.provider_website
+            out.append(Business(
+                name=loc.name,
+                domain=normalize_domain(site),
+                website=site,
+                phone=loc.phone or loc.provider_phone,
+                address=", ".join(x for x in (loc.address, loc.postcode) if x),
+                location=loc.city or loc.local_authority or query.location,
+                category=", ".join(loc.services),
+                has_website=bool(site),
+                external_id=f"{self.key}:{loc.id}",
+                source_url=self._url(loc),
+                provider=self.key,
+                people=self._people(loc),
+                company_number=loc.company_number,
+                register_rating=loc.rating,
+            ))
+            if len(out) >= query.limit:
+                break
+        if consent:
+            logger.info("%s: %d sole traders/partnerships left out for %r (PECR)",
+                        self.key, consent, query.keyword())
+        return out
+
+
+class CareInspectorateRegister(RegisterProvider):
+    key = "care_inspectorate"
+    module = "care_inspectorate"
+    label = "Care Inspectorate register (Scotland care and housing support)"
+    blurb = ("Every registered care home, care at home and housing support "
+             "service in Scotland, with its latest grades. Free, no key.")
+    free_tier = "unlimited (open data)"
+    signup_url = "https://www.careinspectorate.scot/resources-data/data-and-statistics/datastore"
+    caveat = ("Scotland only. No websites or coordinates in the data: search "
+              "by place name or 'Scotland'.")
+
+
+class CiwRegister(RegisterProvider):
+    key = "ciw"
+    module = "ciw"
+    label = "CIW register (Wales care services)"
+    blurb = ("Every registered care home, nursing home and domiciliary support "
+             "service in Wales, with its ratings and Responsible Individual. Free.")
+    free_tier = "unlimited (open data)"
+    signup_url = "https://digital.careinspectorate.wales/directory/data-extract"
+    caveat = "Wales only. No coordinates: search by place name or 'Wales'."
+
+
+class RqiaRegister(RegisterProvider):
+    key = "rqia"
+    module = "rqia"
+    label = "RQIA register (Northern Ireland care services)"
+    blurb = ("Every registered care home, nursing home, domiciliary care agency "
+             "and supported living service in Northern Ireland. Free.")
+    free_tier = "unlimited (open data)"
+    signup_url = "https://www.opendatani.gov.uk/dataset/rqia-regulated-services"
+    caveat = ("Northern Ireland only. No websites or coordinates: search by place "
+              "name or 'Northern Ireland'.")
+
+
+class CrownDependenciesRegister(RegisterProvider):
+    key = "crown_dependencies"
+    module = "crown_dependencies"
+    label = "Jersey Care Commission register"
+    blurb = "Registered care homes and home care services in Jersey. Free."
+    free_tier = "unlimited"
+    signup_url = "https://carecommission.je"
+    caveat = ("Jersey only for now: the Isle of Man blocks automated requests and "
+              "Guernsey publishes no register. No websites in the data.")
+
+
+class SocialHousingRegister(RegisterProvider):
+    key = "social_housing"
+    module = "social_housing"
+    label = "Social landlord registers (UK) and NI Supporting People"
+    blurb = ("Registered social landlords in England, Scotland, Wales and Northern "
+             "Ireland, flagged where they run supported housing, plus Northern "
+             "Ireland's Supporting People services. Free.")
+    free_tier = "unlimited (open data)"
+    signup_url = "https://www.gov.uk/government/publications/registered-providers-of-social-housing"
+    caveat = ("Landlords, not care services: search 'supported housing provider' "
+              "or 'floating support service' by nation or place name.")
+
+    def _search(self, locations, query):
+        return self._mod().search(locations, query.term, query.location, "")
+
+
+class CharitiesRegister(RegisterProvider):
+    key = "charities"
+    module = "charities"
+    label = "Charity registers (supported housing charities, E&W and NI)"
+    blurb = ("Active charities in England, Wales and Northern Ireland whose stated "
+             "activities include supported housing, floating support or tenancy "
+             "support, with income of 100k or more. Free.")
+    free_tier = "unlimited (open data)"
+    signup_url = "https://register-of-charities.charitycommission.gov.uk/register/full-register-download"
+    caveat = ("Scotland's register (OSCR) is left out: its terms forbid direct "
+              "marketing. Search 'supported housing provider' by nation or place.")
+
+
+class ContractsRegister(RegisterProvider):
+    key = "contracts"
+    module = "contracts"
+    label = "Public contract awards (floating support, supported housing)"
+    blurb = ("Organisations councils pay for floating support, housing-related "
+             "support and supported housing, from published contract awards "
+             "(Contracts Finder, Find a Tender, Public Contracts Scotland). Free.")
+    free_tier = "unlimited (open data)"
+    signup_url = "https://www.contractsfinder.service.gov.uk/"
+    caveat = ("Only housing-support searches return anything. Notices rarely give "
+              "websites. Search by nation, council or town.")
+
+    def _search(self, locations, query):
+        low = (query.term or "").lower()
+        if not any(w in low for w in ("floating", "tenancy", "supported housing",
+                                      "supported accommodation", "exempt",
+                                      "housing related", "housing support", "hostel")):
+            return []
+        place = query.location or ""
+        if place.split(",")[0].strip().lower() in NATION_NAMES:
+            place = ""
+        return self._mod().search(locations, query.term, place)
+
+
+class CompaniesHouseSicProvider(DiscoveryProvider):
+    """Active UK companies filed under care SIC codes, including care no
+    regulator lists (companionship, home help, day centres). Free with a
+    Companies House key."""
+
+    key = "companies_house"
+    label = "Companies House (care SIC codes, UK)"
+    kind = "listings"
+    needs_coordinates = False
+    blurb = ("Active UK companies registered under care activity codes, including "
+             "unregulated services. Free with a Companies House key.")
+    cost_note = "free"
+    free_tier = "600 requests per 5 minutes"
+    signup_url = "https://developer.company-information.service.gov.uk/"
+    env_keys = ("companies_house_api_key",)
+    caveat = ("No websites or emails: Sellbird has to find each website itself. The "
+              "place is the registered office, often an accountant's address.")
+
+    def __init__(self):
+        self._known = None
+        self._done: set[str] = set()
+
+    async def _known_numbers(self, client):
+        if self._known is None:
+            from sellbird.collectors import cqc
+            from sellbird.paths import PROJECT_ROOT
+            try:
+                regs = await cqc.load_register(client, PROJECT_ROOT / "data" / "cqc")
+            except Exception:
+                regs = []
+            self._known = {loc.company_number for loc in regs if loc.company_number}
+        return self._known
+
+    async def fetch(self, client, env, query):
+        from sellbird.collectors import companies_house_sic as chs
+        from sellbird.paths import PROJECT_ROOT
+        place = (query.location or "").split(",")[0].strip()
+        if place.lower() in NATION_NAMES:
+            place = ""
+        # The same companies answer every search phrase: one search per place.
+        if place in self._done:
+            return []
+        self._done.add(place)
+        found = await chs.find_care_companies(
+            env.get("companies_house_api_key", ""), place=place,
+            known=await self._known_numbers(client), client=client,
+            limit=query.limit, cache_dir=PROJECT_ROOT / "data" / "companies_house_sic")
+        return [Business(
+            name=loc.name,
+            address=", ".join(x for x in (loc.address, loc.postcode) if x),
+            location=loc.city or query.location,
+            category=", ".join(loc.services),
+            has_website=False,
+            external_id=f"{self.key}:{loc.company_number or loc.id}",
+            source_url=chs.company_url(loc),
+            provider=self.key,
+            company_number=loc.company_number,
+        ) for loc in found]
+
+
 PROVIDERS: dict[str, DiscoveryProvider] = {
     p.key: p for p in (
         OpenStreetMap(),
+        CQCRegister(),
+        CareInspectorateRegister(),
+        CiwRegister(),
+        RqiaRegister(),
+        CrownDependenciesRegister(),
+        SocialHousingRegister(),
+        CharitiesRegister(),
+        ContractsRegister(),
+        CompaniesHouseSicProvider(),
         TinyFish(),
         DataForSEOListings(),
         DataForSEOSerp(),
@@ -1977,6 +2345,16 @@ def _observations(biz: Business, company_id: str, confirmed: set[str],
         add("REVIEW_RATING", num=float(biz.rating))
     if biz.review_count is not None:
         add("REVIEW_COUNT", num=float(biz.review_count))
+    if biz.register_rating and biz.provider == "cqc":
+        add("CQC_RATING", text=biz.register_rating)
+    if biz.company_number:
+        add("COMPANY_NUMBER", text=biz.company_number)
+    for person in biz.people:
+        # "First Last | Title | Register": Scout reads these back as named
+        # contacts (registry_people_from_rows).
+        name = f"{person['first_name']} {person['last_name']}"
+        add("REGISTRY_VERIFIED",
+            text=f"{name} | {person['title']} | {person.get('source', '')}")
     if query is not None and query.preset == "yc":
         # The search matched "backed by Y Combinator" on a page of their own
         # site (third-party sites are filtered out above). Short of reading
