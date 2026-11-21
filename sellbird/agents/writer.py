@@ -528,7 +528,9 @@ class Writer:
             return []
         facts = [f"- Regulator: {regulator}"]
         ratings = report.get("ratings") or {}
-        when = f", published {report['published']}" if report.get("published") else ""
+        # RQIA's report names carry the inspection date, not a publication date.
+        verb = "inspected" if source == "rqia" else "published"
+        when = f", {verb} {report['published']}" if report.get("published") else ""
         if ratings:
             facts.append(f"- {regulator} ratings (latest report{when}): "
                          + "; ".join(f"{k} {v}" for k, v in ratings.items()))

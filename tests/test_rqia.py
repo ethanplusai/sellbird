@@ -511,3 +511,45 @@ async def test_latest_report_is_cached_and_quiet_on_failure(tmp_path):
     assert set(cached) == {"11001", "99999"}
     async with report_client([], broken=True) as client:
         assert await rqia.latest_report(client, "11002", tmp_path / "other") == {}
+
+
+# ── wiring: discovery and the writer ──
+
+@pytest.mark.asyncio
+async def test_discovery_finds_rqia_services_by_trust_and_nation(locations):
+    from harvey.collectors.discover import PROVIDERS, DiscoveryQuery
+    provider = type(PROVIDERS["rqia"])()
+    provider._locations = locations
+    found = await provider.fetch(None, {}, DiscoveryQuery("care home", "Belfast HSC Trust"))
+    assert [b.name for b in found] == ["Willow Lodge"]
+    willow = found[0]
+    assert willow.external_id == "rqia:011001"
+    assert willow.source_url == PAGE                # the latest report's page
+    assert willow.has_website is False and willow.domain == ""
+    assert willow.address == "1 Example Road, Upper Example, BT0 0AA"
+    assert {p["title"] for p in willow.people} >= {"Registered Manager"}
+    everywhere = await provider.fetch(None, {}, DiscoveryQuery("care home", "Northern Ireland"))
+    assert "Willow Lodge" in [b.name for b in everywhere]
+    # A sole trader's supported living service needs consent first (PECR).
+    alone = await provider.fetch(None, {}, DiscoveryQuery("supported living", "Northern Ireland"))
+    assert "Meadow Supported Living Service" not in [b.name for b in alone]
+
+
+@pytest.mark.asyncio
+async def test_writer_uses_the_rqia_report(monkeypatch):
+    from types import SimpleNamespace
+
+    from harvey.agents.writer import Writer
+
+    async def fake_report(client, service_id, data_dir):
+        assert service_id == "011001" and data_dir.name == "rqia"
+        return {"ratings": {}, "summary": "Areas for improvement: (1) Care plans.",
+                "url": PDF, "published": "16 September 2026", "areas": ["Care plans."]}
+
+    monkeypatch.setattr(rqia, "latest_report", fake_report)
+    facts = await Writer._inspection_facts(object.__new__(Writer),
+                                           SimpleNamespace(external_id="rqia:011001"))
+    assert facts[0] == "- Regulator: RQIA (Northern Ireland)"
+    assert len(facts) == 2                           # no ratings line: RQIA doesn't rate
+    assert "inspected 16 September 2026" in facts[1]
+    assert facts[1].endswith("Areas for improvement: (1) Care plans.")
