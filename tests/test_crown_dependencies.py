@@ -130,14 +130,25 @@ def test_unknown_parish_has_no_point():
 async def test_load_register_reads_every_page_and_marks_nursing(tmp_path):
     locs = await _load(tmp_path)
     by_id = {l.id: l for l in locs}
-    assert set(by_id) == {"je-gorse-lane", "je-harbour-view", "je-bramble-cottage",
-                          "je-example-home-care"}
+    # Bramble Cottage's provider could be a sole trader, so it's left out.
+    assert set(by_id) == {"je-gorse-lane", "je-harbour-view", "je-example-home-care"}
     assert by_id["je-harbour-view"].services == ["nursing home"]
     assert by_id["je-gorse-lane"].services == ["care home"]
     assert by_id["je-example-home-care"].services == ["home care"]
     # Gorse Lane and the home care service share a provider.
     assert by_id["je-gorse-lane"].provider_locations == 2
     assert (tmp_path / CD.CACHE_FILE).exists()
+
+
+@pytest.mark.asyncio
+async def test_blank_ownership_left_out_but_kept_in_the_copy(tmp_path):
+    locs = await _load(tmp_path)
+    assert all(l.ownership == "Organisation" for l in locs)
+    copy = CD.load_cache(tmp_path / CD.CACHE_FILE)
+    assert "je-bramble-cottage" in {l.id for l in copy}
+    assert "je-bramble-cottage" not in {l.id for l in locs}
+    # From the copy too, not just a fresh read.
+    assert {l.id for l in await _load(tmp_path)} == {l.id for l in locs}
 
 
 @pytest.mark.asyncio
@@ -166,7 +177,7 @@ async def test_no_copy_and_no_commission_raises(tmp_path):
 async def test_search_by_island_parish_and_radius(tmp_path):
     locs = await _load(tmp_path)
     assert {l.id for l in CD.search(locs, "care home", "Jersey")} == {
-        "je-gorse-lane", "je-harbour-view", "je-bramble-cottage"}
+        "je-gorse-lane", "je-harbour-view"}
     assert [l.id for l in CD.search(locs, "home care", "St Helier, Jersey")] == [
         "je-example-home-care"]
     assert [l.id for l in CD.search(locs, "nursing home", "Jersey")] == ["je-harbour-view"]
