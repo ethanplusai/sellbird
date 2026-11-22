@@ -528,6 +528,27 @@ def cmd_outbox(args):
 
     async def _outbox():
         state = StateManager()
+        if args.summary:
+            from sellbird.config import read_configured_approval
+
+            try:
+                paused, counts = await state.outbox_summary()
+                approval = read_configured_approval()
+            except FileNotFoundError:
+                print("No initialized Outbox database. Run Sellbird setup first.")
+                sys.exit(1)
+            except Exception:
+                print("Could not read the Outbox summary. Check that the workspace is initialized.", file=sys.stderr)
+                sys.exit(1)
+            approval_label = {True: "yes", False: "no", None: "unknown"}[approval]
+            print(f"Approval required: {approval_label}")
+            print(f"Sending paused: {'yes' if paused else 'no'}")
+            print(f"Awaiting approval: {counts['pending_review']}")
+            print(f"Approved: {counts['approved']}")
+            print(f"Sending: {counts['sending']}")
+            print(f"Sent: {counts['sent']}")
+            return
+
         await state.init_db()
 
         if args.approve_all:
@@ -1215,9 +1236,10 @@ def main():
 
     # sellbird outbox
     sub = subparsers.add_parser("outbox", help="Review/approve queued emails")
-    sub.add_argument("--approve", metavar="ID", default="", help="Approve one item")
+    sub.add_argument("--approve", metavar="ID", help="Approve one item")
     sub.add_argument("--approve-all", action="store_true", help="Approve all pending")
-    sub.add_argument("--reject", metavar="ID", default="", help="Reject one item")
+    sub.add_argument("--reject", metavar="ID", help="Reject one item")
+    sub.add_argument("--summary", action="store_true", help="Show queue counts without email content")
     sub.set_defaults(func=cmd_outbox)
 
     # sellbird sending pause|resume|status
@@ -1337,7 +1359,11 @@ def main():
         sub.set_defaults(func=configure(sub))
 
     args = parser.parse_args()
-    _carry_over_from_harvey()
+    outbox_summary = args.command == "outbox" and args.summary
+    if outbox_summary and (args.approve is not None or args.approve_all or args.reject is not None):
+        parser.error("--summary cannot be combined with --approve, --approve-all or --reject")
+    if not outbox_summary:
+        _carry_over_from_harvey()
     args._project_root = project_root
 
     # Fill the home folder before any command. Silent: a command's stdout may
@@ -1346,7 +1372,8 @@ def main():
     from sellbird import home
     from sellbird.paths import PROJECT_ROOT as home_root
     try:
-        home.seed_home(home_root, home.bundled_defaults())
+        if not outbox_summary:
+            home.seed_home(home_root, home.bundled_defaults())
     except Exception as e:
         reason = (e.strerror if isinstance(e, OSError) else None) or type(e).__name__
         print(f"  Could not prepare the home folder {home_root}: {reason}", file=sys.stderr)

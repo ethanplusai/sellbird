@@ -1091,6 +1091,33 @@ class StateManager:
             await db.commit()
             return item_id if cursor.rowcount > 0 else None
 
+    async def outbox_summary(self) -> tuple[bool, dict[str, int]]:
+        """Count native Outbox states without reading or returning message content."""
+        backend, name = storage.split(self.db_path)
+        if backend is None and not Path(name).is_file():
+            raise FileNotFoundError("No initialized Outbox database. Run Sellbird setup first.")
+
+        query = """SELECT
+                     EXISTS (SELECT 1 FROM settings WHERE key = 'sending_paused' AND value <> ''),
+                     COUNT(CASE WHEN status = 'pending_review' THEN 1 END),
+                     COUNT(CASE WHEN status = 'approved' THEN 1 END),
+                     COUNT(CASE WHEN status = 'sending' THEN 1 END),
+                     COUNT(CASE WHEN status = 'sent' THEN 1 END)
+                   FROM outbox"""
+        if backend is None:
+            # The ordinary connection can create a file. The summary must not,
+            # even if the file is removed after the existence check.
+            uri = Path(name).resolve().as_uri() + "?mode=ro"
+            async with aiosqlite.connect(uri, uri=True, timeout=BUSY_TIMEOUT_SECONDS) as db:
+                async with db.execute(query) as cursor:
+                    row = await cursor.fetchone()
+        else:
+            async with self._connect() as db:
+                async with db.execute(query) as cursor:
+                    row = await cursor.fetchone()
+        phases = ("pending_review", "approved", "sending", "sent")
+        return bool(row[0]), dict(zip(phases, row[1:]))
+
     async def get_outbox(
         self,
         status: str | None = None,

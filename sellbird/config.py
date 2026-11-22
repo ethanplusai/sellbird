@@ -906,6 +906,28 @@ def current_config() -> "SellbirdConfig | None":
     return _CURRENT_CONFIG.get()
 
 
+def read_configured_approval() -> bool | None:
+    """Read the approval flag for an operator summary without logging config errors."""
+    given = current_config()
+    if given is not None:
+        return given.channels.email.require_approval
+    from sellbird.workspace_home import current_home
+    if current_home().hosted:
+        return None
+    try:
+        data = yaml.safe_load(read_user_text(_find_config_file()))
+        for key in ("channels", "email"):
+            if not isinstance(data, dict):
+                return None
+            data = data.get(key, {})
+        if not isinstance(data, dict):
+            return None
+        value = data.get("require_approval", True)
+        return value if isinstance(value, bool) else None
+    except (ConfigError, OSError, UnicodeError, yaml.YAMLError):
+        return None
+
+
 def load_config(config_path: str | None = None) -> SellbirdConfig:
     """Load Sellbird configuration from YAML file.
 

@@ -32,6 +32,18 @@ channels:
       link: "https://yourdomain.example"
 ```
 
+### Share counts without sharing drafts
+
+Run `sellbird outbox --summary` on an initialized workspace to see the full
+counts awaiting approval, approved, sending and sent. It shows the configured
+approval requirement and the saved pause separately. The output contains no
+recipient, subject, body, item ID or pause reason. It doesn't approve or send
+mail, contact the model, or initialize the database. Use the ordinary Outbox
+when you need to read or decide on individual drafts.
+
+These are queue counts, not confirmation of delivery or a promise that a
+send already in progress will stop.
+
 ### Approval or autopilot
 
 Sellbird has two sending modes. The dashboard shows which one you're in at the

@@ -9,6 +9,11 @@ minor versions can still change behaviour.
 
 ### Added
 
+- **`sellbird outbox --summary` shows queue counts without draft content.**
+  The opt-in view also reports the configured approval requirement and
+  sending pause. It reads an initialized workspace and cannot approve,
+  reject or send mail.
+
 - **`writer.require_tip: true` skips prospects with nothing to build a tip
   on.** A first email is meant to name one concrete thing the sender would
   change; with no finding about the company, the draft could only say it had no
