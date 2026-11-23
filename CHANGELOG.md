@@ -30,6 +30,12 @@ minor versions can still change behaviour.
 
 ### Changed
 
+- **The dashboard works behind an identity-aware proxy.** Its API calls now
+  send same-origin cookies instead of none, so a proxy's session cookie (for
+  example Cloudflare Access) reaches the dashboard and the calls are no longer
+  redirected to a login page. The server still ignores cookies: every call
+  is still authenticated by the dashboard token, and cross-origin requests
+  are still refused.
 - **The writer sees what Sellbird read off a company's own site.** The free
   homepage signals (no structured data, a site untouched for six months, a very
   small sitemap, AI crawlers blocked) were collected but
