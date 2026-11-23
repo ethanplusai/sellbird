@@ -63,7 +63,11 @@ function authFetch(path, opts) {
   if (token) headers.set('Authorization', 'Bearer ' + token);
   o.headers = headers;
   o.mode = 'same-origin';
-  o.credentials = 'omit';
+  // 'same-origin', not 'omit': behind an identity proxy such as Cloudflare
+  // Access, its session cookie must reach this origin or every call is
+  // redirected to the login page. The server never reads cookies; the
+  // bearer token above is still what authenticates each request.
+  o.credentials = 'same-origin';
   o.cache = 'no-store';
   o.redirect = 'error';
   // Not 'no-referrer': per the Fetch spec that makes a POST's Origin "null"
