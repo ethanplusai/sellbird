@@ -141,6 +141,22 @@ def test_overdue_wake_up_is_said_plainly():
     assert view["reason"].startswith("Due now")
 
 
+def test_a_loop_that_never_reported_is_not_responding():
+    view = ls.scheduler_view({}, running=True, started_at=NOW - timedelta(days=5), now=NOW)
+    assert view["state"] == "stuck" and "5 days" in view["reason"]
+    fresh = ls.scheduler_view({}, running=True, started_at=NOW - timedelta(minutes=3), now=NOW)
+    assert fresh["reason"] == "Starting up."
+
+
+def test_a_loop_days_past_its_wake_up_is_not_responding():
+    # A loop that holds the lock but can't write its notes (its folder was
+    # moved while it ran) must not go on saying "Due now" for days.
+    loop = {"phase": "error", "since": "2026-11-13T14:45:00Z", "next_at": "2026-11-13T15:00:00Z"}
+    view = ls.scheduler_view(loop, running=True, now=NOW)
+    assert view["state"] == "stuck" and view["tone"] == "bad"
+    assert "5 days" in view["reason"] and "start it again" in view["reason"]
+
+
 # ── /api/pipeline ──
 
 

@@ -33,6 +33,11 @@ PAUSED = "paused"
 ERROR = "error"
 STOPPED = "stopped"
 
+# How far past its wake-up time a running loop can be before the page says it
+# isn't responding. Longer than the error backoff cap (15 min) and a laptop's
+# wake-up catch-up, so a short sleep doesn't trip it.
+STALE_AFTER = timedelta(hours=1)
+
 # What each of the loop's jobs is called on the page.
 TASK_LABELS = {
     "prospect": "Finding and checking emails",
@@ -53,6 +58,13 @@ def _now() -> datetime:
 
 def _iso(dt: datetime | None) -> str:
     return dt.astimezone(UTC).isoformat(timespec="seconds").replace("+00:00", "Z") if dt else ""
+
+
+def _ago(delta: timedelta) -> str:
+    hours = int(delta.total_seconds() // 3600)
+    if hours >= 48:
+        return f"{hours // 24} days"
+    return "an hour" if hours <= 1 else f"{hours} hours"
 
 
 def parse_iso(text: str | None) -> datetime | None:
@@ -190,6 +202,13 @@ def scheduler_view(loop: dict, *, running: bool, started_at: datetime | None = N
     phase = loop.get("phase") or ""
     # No note yet, or one left by an earlier process: this one is starting.
     if not since or phase == STOPPED or (started_at and since < started_at - timedelta(seconds=5)):
+        if started_at and now - started_at > STALE_AFTER:
+            # Started long ago and never wrote a note: it can't reach its
+            # database, or it's an old build that predates these notes.
+            return base | {"state": "stuck", "label": "Not responding", "tone": "bad",
+                           "reason": "It started " + _ago(now - started_at) + " ago and hasn't "
+                                     "reported since, so it may not be sending. The log on "
+                                     "Controls says why. Stop Sellbird and start it again."}
         return base | {"state": "running_now", "label": "Running now", "tone": "active",
                        "reason": "Starting up."}
     if phase == WORKING:
@@ -213,6 +232,15 @@ def scheduler_view(loop: dict, *, running: bool, started_at: datetime | None = N
                    "reason": reasons.get(phase, "Between runs.")}
     if phase == QUIET_HOURS and loop.get("note"):
         view["reason"] = loop["note"]
+    if next_at and now - next_at > STALE_AFTER:
+        # Long past its wake-up time with no new note: the process is alive
+        # (it holds the lock) but can't write here. Found in production when
+        # the install folder was moved while it ran: it retried for days and
+        # this line went on saying "Due now".
+        return view | {"state": "stuck", "label": "Not responding", "tone": "bad",
+                       "reason": "It was due to run " + _ago(now - next_at) + " ago and hasn't, so "
+                                 "nothing is being sent. The log on Controls says why. Stop "
+                                 "Sellbird and start it again."}
     if next_at and now - next_at > timedelta(minutes=2):
         # Past its wake-up time and no new note: the computer may have slept.
         view["reason"] = "Due now. If this stays, the computer may have been asleep."
