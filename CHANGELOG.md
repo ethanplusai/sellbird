@@ -9,6 +9,25 @@ minor versions can still change behaviour.
 
 ### Added
 
+- **`writer.research: true` reads each company's own site before writing.**
+  The Writer drafted from an industry name and a description that was often
+  empty, so emails misdescribed businesses, came out in the wrong language,
+  ignored the managers a site names and went to competitors. With the option
+  on, Sellbird reads up to six of the company's own pages and asks for a short
+  profile and a fit verdict. Competitors, directory pages and dead sites are
+  marked `unfit` and their domain is suppressed; weak fits are marked `unfit`
+  and left alone. Every opening observation must quote the site word for word,
+  and a person the pages don't name is dropped. Emails follow the site's
+  language, and a general inbox is greeted by the manager the site names.
+  Profiles are cached for 90 days, so each company costs one call. Off by
+  default.
+- **`writer.self_check: true` reviews researched drafts before they are
+  staged.** Each draft is checked against the research and your email rules
+  (unsupported claims, an industry-wide opening, the wrong language or
+  greeting, a pitch), rewritten once if needed, and otherwise marked
+  `check_failed` rather than staged. Follow-ups for a researched prospect are
+  written for that company and keep the first email's greeting. Off by
+  default.
 - **`writer.require_tip: true` skips prospects with nothing to build a tip
   on.** A first email is meant to name one concrete thing the sender would
   change; with no finding about the company, the draft could only say it had no

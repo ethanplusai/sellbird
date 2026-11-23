@@ -12,7 +12,7 @@ design). Every draft still passes the deterministic pre-send gate.
 import json
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sellbird.brain import Brain
 from sellbird.config import EmailRulesError, SellbirdConfig, compliance_of, load_email_rules
@@ -25,12 +25,17 @@ from sellbird.integrations.mail_provider import NATIVE_PROVIDERS
 from sellbird.models.campaign import Campaign, EmailStep
 from sellbird.state import WRITABLE_EMAIL_STATUSES, StateManager
 from sellbird.sending_mode import sync_sending_mode
+from sellbird import research as company_research
 from sellbird.site_facts import site_facts
 from sellbird.startups import startup_facts
 from sellbird.untrusted import UNTRUSTED_RULE, fence
 
 # A prospect with nothing to build a tip on (writer.require_tip) is parked here.
 NO_TIP_STATUS = "no_tip"
+# Research judged the company a competitor or a poor fit (writer.research).
+UNFIT_STATUS = "unfit"
+# The researched draft failed its self-check twice (writer.self_check).
+CHECK_FAILED_STATUS = "check_failed"
 
 logger = logging.getLogger("sellbird.writer")
 
@@ -255,6 +260,14 @@ class Writer:
                 logger.info("Writer: No prospects at or above the minimum score.")
                 return
 
+        # writer.research: read each company's site, drop competitors and poor
+        # fits before any draft is written for them.
+        self._research: dict[str, dict | None] = {}
+        if self._research_on():
+            prospects_with_email = await self._research_gate(prospects_with_email)
+            if not prospects_with_email:
+                return
+
         # writer.require_tip: no draft for a prospect with nothing concrete to
         # build its tip on. Parked as "no_tip" rather than left "new", which
         # would make the heartbeat try to write for it every cycle.
@@ -321,7 +334,7 @@ class Writer:
             # Native providers: replace the shared template for email 1 with
             # a per-prospect draft grounded in that company's actual facts.
             if self.is_native:
-                await self._personalize_first_emails(campaign_id, prospects)
+                await self._personalize_first_emails(campaign_id, prospects, sequence)
 
             await self.state.log_action(
                 action_type="write_campaign",
@@ -349,6 +362,73 @@ class Writer:
     def _require_tip(self) -> bool:
         """writer.require_tip, or False when the config has none."""
         return bool(getattr(getattr(self.config, "writer", None), "require_tip", False))
+
+    def _research_on(self) -> bool:
+        return bool(getattr(getattr(self.config, "writer", None), "research", False))
+
+    def _self_check_on(self) -> bool:
+        return bool(getattr(getattr(self.config, "writer", None), "self_check", False))
+
+    def _profile(self, prospect) -> dict | None:
+        return getattr(self, "_research", {}).get(prospect.company_id or "")
+
+    async def _research_gate(self, prospects: list) -> list:
+        """Research each company once (cached), park the unfit, keep the rest.
+
+        A site that can't be read keeps its prospects: research only ever
+        removes a company on evidence, never for lack of it."""
+        by_company: dict[str, list] = {}
+        for p in prospects:
+            by_company.setdefault(p.company_id or "", []).append(p)
+        kept = []
+        for cid, group in by_company.items():
+            company = None
+            if cid:
+                try:
+                    company = await self.state.get_company(cid)
+                except Exception:
+                    company = None
+            if company is None or not company.domain:
+                kept.extend(group)
+                continue
+            profile = await company_research.cached(self.state, cid)
+            if profile is None:
+                try:
+                    profile = await company_research.research_company(self.brain, company, self.config)
+                except Exception as e:
+                    logger.warning(f"Writer: research failed for {company.domain}: {e}")
+                    profile = None
+                if profile is None and getattr(self.brain, "paused_reason", ""):
+                    # The provider is down: research and writing both wait.
+                    logger.warning(f"Writer: {self.brain.paused_reason}; research waits.")
+                    return []
+                if profile is not None:
+                    await company_research.save(self.state, cid, profile)
+            self._research[cid] = profile
+            if profile is None:
+                logger.info(f"Writer: could not research {company.domain}; writing without it.")
+                kept.extend(group)
+                continue
+            if profile["fit"] in ("reject", "weak"):
+                for p in group:
+                    await self.state.update_prospect_status(p.id, UNFIT_STATUS)
+                if profile["fit"] == "reject":
+                    try:
+                        await self.state.add_suppression(
+                            "domain", company.domain, "manual", source="research")
+                    except Exception as e:
+                        logger.warning(f"Writer: could not suppress {company.domain}: {e}")
+                await self.state.log_action(
+                    action_type="research_unfit", agent="writer",
+                    details={"company": company.name, "domain": company.domain,
+                             "fit": profile["fit"], "reason": profile.get("reason", ""),
+                             "competitor": profile.get("competitor", False),
+                             "prospects": [p.email for p in group]})
+                logger.info(f"Writer: not writing to {company.domain} "
+                            f"({profile['fit']} fit: {profile.get('reason', '')})")
+                continue
+            kept.extend(group)
+        return kept
 
     async def _site_facts(self, company_id) -> list[str]:
         """Homepage findings for the prompt, unless writer.site_facts is off."""
@@ -406,7 +486,8 @@ class Writer:
                 f"{MAX_WRITE_ATTEMPTS} unusable drafts; marked write_failed."
             )
 
-    async def _personalize_first_emails(self, campaign_id: str, prospects: list):
+    async def _personalize_first_emails(self, campaign_id: str, prospects: list,
+                                        sequence: list | None = None):
         """Draft a grounded, per-prospect email 1 and stage it in the outbox.
 
         The outbox unique index means the sender's later template staging
@@ -440,9 +521,15 @@ class Writer:
 
         drafted = 0
         for (prospect, _), draft in zip(pending, polished):
-            draft = await self._keep_to_rules(draft, step=1, names=_names(prospect))
+            names = _names(prospect) + self._profile_names(prospect)
+            draft = await self._keep_to_rules(draft, step=1, names=names)
             if draft is None:
                 continue
+            if self._self_check_on() and self._profile(prospect):
+                draft = await self._checked(prospect, draft, names)
+                if draft is None:
+                    await self.state.update_prospect_status(prospect.id, CHECK_FAILED_STATUS)
+                    continue
             item_id = await self.state.add_outbox_item(
                 prospect_id=prospect.id,
                 campaign_id=campaign_id,
@@ -457,6 +544,10 @@ class Writer:
             )
             if item_id:
                 drafted += 1
+                if self._profile(prospect) and sequence:
+                    await self._personal_follow_ups(
+                        prospect, draft, sequence, campaign_id, names,
+                        status=status, provider=provider)
 
         if drafted:
             logger.info(
@@ -556,6 +647,30 @@ class Writer:
                     f"- Signal ({signal.get('type', 'signal')}): {signal.get('detail', '')}"
                 )
         facts.extend(await self._site_facts(prospect.company_id))
+        profile = self._profile(prospect)
+        if profile:
+            facts.extend(company_research.fact_lines(profile))
+            person = company_research.greeting_person(profile)
+            if prospect.is_company_inbox and person:
+                inbox_rule = (
+                    "\n- This goes to the company's general inbox, but the research names "
+                    f"{person['name']} ({person.get('role') or 'a manager'}). Greet them by name"
+                    "\n  as the OPERATOR'S EMAIL RULES say for a known name (with a courtesy title only"
+                    "\n  when the research gives it), or by full name if no rule says how.")
+            if profile.get("language"):
+                inbox_rule += (
+                    f"\n- Write the whole email in {company_research.language_name(profile['language'])}, "
+                    "the language of their website, even if other rules name another language.")
+            inbox_rule += (
+                "\n- Write no sentence about what you or your company do or how you work"
+                "\n  (no 'We automate ...', 'We build ...'): the offer question is the only"
+                "\n  line about you. Name the offer in a few plain words; don't list what it"
+                "\n  contains.")
+            if profile.get("hooks"):
+                inbox_rule += (
+                    "\n- Open with one of the 'Possible opening' facts. Never open with a sentence"
+                    "\n  about their industry in general, and say nothing about their processes"
+                    "\n  that the research does not support (hedge a guess as a guess).")
         if prospect.personalization_notes:
             facts.append(f"- Research notes: {prospect.personalization_notes}")
         startup = await self._startup(prospect.company_id)
@@ -611,6 +726,7 @@ Requirements:
 
 Return ONLY JSON: {{"subject": "...", "body": "..."}}"""
 
+        self.__dict__.setdefault("_facts", {})[prospect.id] = "\n".join(facts)
         result = await self.brain.think_json(
             prompt, session_id="sellbird-writer",
             agent="writer", task="personal_email",
@@ -632,6 +748,11 @@ Return ONLY JSON: {{"subject": "...", "body": "..."}}"""
             for p in prospects[:5]  # Show sample for context
         )
         inbox_batch = all(p.is_company_inbox for p in prospects)
+        langs = {(self._profile(p) or {}).get("language", "") for p in prospects}
+        lang_rule = ""
+        if len(langs) == 1 and next(iter(langs)):
+            lang_rule = (f"\n- Write all three emails in {company_research.language_name(next(iter(langs)))},"
+                         "\n  the language of these companies' websites, even if other rules name another.")
         if inbox_batch:
             merge_rule = (
                 "- These go to each company's general inbox, so no names are known.\n"
@@ -702,7 +823,7 @@ Write a 3-email cold outreach sequence for prospects like these:
 
 Requirements:
 {shape}
-{merge_rule}{style}
+{merge_rule}{style}{lang_rule}
 {footer_rule(self.config, rules)}
 {strict}
 
@@ -741,6 +862,171 @@ Return ONLY a JSON array (no markdown fences, no commentary):
                 return []
             step.subject, step.body = kept["subject"], kept["body"]
         return steps
+
+    async def _personal_follow_ups(self, prospect, first: dict, sequence: list, campaign_id: str,
+                                   names: list[str], *, status: str, provider: str) -> int:
+        """Emails 2 and 3 written for this company from its research, staged
+        next to its first email. The outbox keeps one row per (campaign,
+        prospect, step), so the campaign template never replaces them; a step
+        that can't be written well is left to the template. Returns how many."""
+        if not getattr(getattr(self.config.channels, "email", None), "follow_ups", True):
+            return 0
+        later = [s for s in sequence if s.step > 1]
+        if not later:
+            return 0
+        profile = self._profile(prospect) or {}
+        lang = company_research.language_name(profile.get("language", ""))
+        rules = getattr(self, "email_rules", "")
+        greeting = next((ln.strip() for ln in str(first.get("body") or "").splitlines() if ln.strip()), "")
+        self.__dict__.setdefault("_first_greeting", {})[prospect.id] = greeting
+        steps_spec = ", ".join(
+            f'{{"step": {s.step}, "subject": "...", "body": "..."}}' for s in later)
+        prompt = f"""Write the follow-ups to this cold email, for when there is no reply.
+
+THE FIRST EMAIL:
+{fence(json.dumps(first, ensure_ascii=False, indent=2), "draft")}
+
+RESEARCH (the only facts you may use about the company):
+{fence(getattr(self, "_facts", {}).get(prospect.id, ""), "prospect research")}
+
+{UNTRUSTED_RULE}
+
+THE EMAIL RULES:
+{rules or "(built-in: short, plain, one question, no pitch)"}
+
+Requirements:
+- {len(later)} emails, steps {", ".join(str(s.step) for s in later)}. Step 2 adds ONE new angle: a different
+  fact from the research than the first email used, tied to the same free offer.
+  The last step closes the loop politely in one or two sentences and leaves the offer open.
+- Exactly the first email's greeting line ({greeting!r}), same language{(" (" + lang + ")") if lang else ""}, same sign-off.
+- No sentence about what the sender's company does or how it works, and nothing
+  about the company that is not in the research. Never "just following up".
+- Write the actual text, no merge variables.
+
+Return ONLY a JSON array: [{steps_spec}]"""
+        result = await self.brain.think_json(
+            prompt, session_id="sellbird-writer", agent="writer", task="personal_follow_ups")
+        if not isinstance(result, list):
+            return 0
+        written = {}
+        for item in result:
+            if isinstance(item, dict) and item.get("subject") and item.get("body"):
+                try:
+                    written[int(item.get("step"))] = item
+                except (TypeError, ValueError):
+                    continue
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        days, staged = 0, 0
+        for s in later:
+            days += max(0, s.delay_days)
+            item = written.get(s.step)
+            if item is None:
+                continue
+            draft = await self._keep_to_rules(
+                {"subject": str(item["subject"]).strip()[:120], "body": str(item["body"]).strip()[:2000]},
+                step=s.step, names=names)
+            if draft is not None and self._self_check_on():
+                draft = await self._checked(prospect, draft, names, step=s.step)
+            if draft is None:
+                logger.info(f"Writer: follow-up {s.step} for {prospect.email} left to the campaign template.")
+                continue
+            if await self.state.add_outbox_item(
+                    prospect_id=prospect.id, campaign_id=campaign_id, step=s.step,
+                    to_email=prospect.email, subject=draft["subject"], body=draft["body"],
+                    send_at=(now + timedelta(days=days)).isoformat(), status=status,
+                    provider=provider, approved_by="" if status == "pending_review" else "autopilot"):
+                staged += 1
+        return staged
+
+    def _profile_names(self, prospect) -> list[str]:
+        """Names the research found: text that is theirs, like their company name."""
+        return [p["name"] for p in (self._profile(prospect) or {}).get("people") or [] if p.get("name")]
+
+    async def _check_problems(self, prospect, draft: dict, step: int = 1) -> list[str] | None:
+        """What is wrong with a researched first email, [] when nothing, None
+        when the check itself failed (no reply)."""
+        rules = getattr(self, "email_rules", "")
+        profile = self._profile(prospect) or {}
+        lang = company_research.language_name(profile.get("language", ""))
+        person = company_research.greeting_person(profile)
+        kind = "the first email" if step == 1 else f"follow-up email {step} (sent if there is no reply)"
+        first_greeting = getattr(self, "_first_greeting", {}).get(prospect.id, "")
+        if step > 1 and first_greeting:
+            greeting_rule = f"Its greeting is not exactly the first email's greeting: {first_greeting!r}."
+        elif person and prospect.is_company_inbox:
+            greeting_rule = f"It does not greet {person['name']} by name."
+        else:
+            greeting_rule = "The greeting breaks the rules."
+        prompt = f"""You check {kind} of a cold email sequence before it goes to a person's review queue.
+
+RESEARCH about the recipient's company (from its own website):
+{fence(getattr(self, "_facts", {}).get(prospect.id, ""), "prospect research")}
+
+{UNTRUSTED_RULE}
+
+THE EMAIL RULES:
+{rules or "(built-in rules: short, one specific finding, one question, no pitch)"}
+
+THE EMAIL (subject and body; Sellbird adds the postal address and opt-out line later):
+{fence(json.dumps(draft, ensure_ascii=False, indent=2), "draft")}
+
+List every problem from this checklist, and nothing else:
+1. A claim about the company that the research does not support, stated as fact
+   rather than hedged as a guess.
+2. It opens with a sentence about the industry in general instead of this company.
+3. It is not written in {lang or "the language the rules require"}.
+4. {greeting_rule}
+5. It breaks one of THE EMAIL RULES (length, one question, no links, no pitch, sign-off).
+6. It describes what the company does wrongly.
+7. It has a sentence describing what the sender's company does or how it works
+   (a pitch).
+
+Return ONLY JSON: {{"problems": ["...", "..."]}} (an empty list when it is fine)."""
+        result = await self.brain.think_json(
+            prompt, session_id="sellbird-writer", agent="writer", task="self_check")
+        if not isinstance(result, dict) or not isinstance(result.get("problems"), list):
+            return None
+        return [str(p).strip() for p in result["problems"] if str(p).strip()][:6]
+
+    async def _checked(self, prospect, draft: dict, names: list[str], step: int = 1) -> dict | None:
+        """``draft`` once it passes the self-check, after at most one rewrite;
+        None when it still fails. A failed check call passes nothing."""
+        problems = await self._check_problems(prospect, draft, step)
+        if problems == []:
+            return draft
+        if problems is None:
+            logger.warning(f"Writer: self-check gave no answer for {prospect.email}; not staging.")
+            return None
+        prompt = f"""Rewrite this cold email so it fixes exactly these problems:
+{chr(10).join("- " + p for p in problems)}
+
+RESEARCH (the only facts you may use about the company):
+{fence(getattr(self, "_facts", {}).get(prospect.id, ""), "prospect research")}
+
+{UNTRUSTED_RULE}
+
+THE EMAIL RULES:
+{getattr(self, "email_rules", "") or "(built-in: short, one finding, one question)"}
+
+Draft:
+{fence(json.dumps(draft, ensure_ascii=False, indent=2), "draft")}
+
+Keep what is right, add no claim the research does not support, keep the sign-off.
+Return ONLY a JSON object: {{"subject": "...", "body": "..."}}"""
+        result = await self.brain.think_json(
+            prompt, session_id="sellbird-writer", agent="writer", task="self_check_fix")
+        if not isinstance(result, dict) or not result.get("subject") or not result.get("body"):
+            return None
+        rewrite = await self._keep_to_rules(
+            {"subject": str(result["subject"]).strip()[:120], "body": str(result["body"]).strip()[:2000]},
+            step=step, names=names)
+        if rewrite is None:
+            return None
+        if await self._check_problems(prospect, rewrite, step) == []:
+            return rewrite
+        logger.warning(f"Writer: draft for {prospect.email} failed its self-check twice: "
+                       + "; ".join(problems))
+        return None
 
     async def _keep_to_rules(self, draft: dict, *, step: int, names=()) -> dict | None:
         """``draft`` tidied, signed and within Sellbird's writing rules
@@ -882,6 +1168,10 @@ Return ONLY a JSON object: {{"subject": "...", "body": "..."}}"""
             # greet anyone by name.
             kind = "inbox-outreach" if prospect.is_company_inbox else "outreach"
             key = f"{industry}-{kind}"
+            # Researched: follow-ups are shared by the batch, so one language per batch.
+            lang = (self._profile(prospect) or {}).get("language", "")
+            if lang:
+                key = f"{industry}-{lang}-{kind}"
 
             if key not in batches:
                 batches[key] = []
