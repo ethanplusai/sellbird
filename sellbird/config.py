@@ -775,6 +775,19 @@ class WriterConfig(BaseModel):
     # written for, instead of getting a draft that says it has no advice. Put
     # them back with `sellbird retry-writes --no-tip`, once more is known.
     require_tip: bool = False
+    # true = before drafting, read each company's own site (homepage, legal
+    # notice, services, about, contact; sellbird.research), save a profile
+    # and a fit verdict, and write from it: in the site's language, greeting
+    # a named manager, opening with something the site actually says. A
+    # company judged a competitor or a poor fit is parked as "unfit" and not
+    # written to; a competitor's domain is also suppressed. One extra model
+    # call per company, cached for 90 days.
+    research: bool = False
+    # true = check every researched first email against the research and the
+    # email rules before it reaches the Outbox (one model call, one rewrite
+    # at most). A draft that still fails is not staged and its prospect is
+    # marked "check_failed", so no generic template goes out in its place.
+    self_check: bool = False
 
     @field_validator("email_rules", mode="before")
     @classmethod

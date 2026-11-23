@@ -17,7 +17,7 @@ channels:
                 require_approval, send_to_risky, min_write_score, max_bounce_rate, follow_ups, warmup, send_window, signature }
 usage:        { max_daily_claude_percent, heartbeat_interval_minutes, quiet_hours }
 brain:        { provider: claude | codex, model, reasoning_effort }   # optional; claude by default
-writer:       { humanizer, site_facts, require_tip }   # optional; humanizer true adds one editing pass per batch using ~/.claude/skills/humanizer/SKILL.md
+writer:       { humanizer, site_facts, require_tip, research, self_check }   # optional; humanizer true adds one editing pass per batch using ~/.claude/skills/humanizer/SKILL.md
               # site_facts (default true): the Writer sees what the free homepage signals found (no structured data,
               # a stale or very small site, AI crawlers blocked) so an email can name one concrete thing to change.
               # They come from an automated read of one page and can be wrong, so check a draft's claim
@@ -27,6 +27,17 @@ writer:       { humanizer, site_facts, require_tip }   # optional; humanizer tru
               # marked "no_tip" and skipped, instead of getting a draft that says it has no advice. The dashboard shows
               # them as "Nothing to write about yet"; `sellbird retry-writes --no-tip` puts them back in line.
               # email_rules: your own markdown rules for the emails' shape (see The skills library)
+              # research (default false): true reads up to six of each company's own pages (home, legal notice,
+              # services, about, contact) before writing and asks for a short profile: what they do, the site's
+              # language, the managers it names, how enquiries reach them, whether they sell what you sell, and
+              # a fit verdict. A "reject" (a competitor, a directory page, a dead site) or "weak" fit marks the
+              # prospect "unfit" and writes nothing; a reject also suppresses the domain. Emails are written in the
+              # site's language, open with an observation backed by a quote from the site, and greet the manager
+              # the site names when the address is a general inbox. One brain call per company, kept for 90 days.
+              # self_check (default false, needs research): true checks each researched draft against the research
+              # and your email rules before staging it, rewrites it once if something is wrong, and otherwise marks
+              # the prospect "check_failed" instead of staging a bad email. On Gmail, Microsoft and SMTP, a
+              # researched prospect's follow-ups are written for that company too, with the first email's greeting.
 ```
 
 `min_write_score` (0-100, default 0) is the lowest Scout fit score the writer
