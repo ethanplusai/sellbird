@@ -1072,6 +1072,7 @@ async def get_stats():
             "codex_calls_today": codex_today,
             "brain_provider": _active_provider(),
             "brain_status": await _brain_status(),
+            "quota_note": await _quota_note(),
         }
     except Exception as e:
         return {"error": str(e)}
@@ -1096,6 +1097,20 @@ def _active_brain():
         return load_brain_config()
     except Exception:
         return None
+
+
+async def _quota_note() -> str:
+    """What the loop's usage budget went by, when the real quota couldn't be
+    read (so a pause from Sellbird's own call count isn't mistaken for the
+    plan running out). "" while the live quota is readable."""
+    from sellbird.brain import QUOTA_STATUS_KEY, describe_quota, parse_brain_status
+    rows = await query_db("SELECT value FROM settings WHERE key = ?", (QUOTA_STATUS_KEY,))
+    if not rows:
+        return ""
+    raw = rows[0]["value"]
+    if parse_brain_status(raw).get("source") == "live":
+        return ""
+    return describe_quota(raw, _active_provider())
 
 
 async def _brain_status() -> dict:

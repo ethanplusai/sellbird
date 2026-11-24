@@ -1487,10 +1487,15 @@ function brainCallChips(data) {
       escHtml(st.provider === 'codex' ? 'Codex' : 'Brain') + ' <b>paused</b>: ' +
       escHtml((st.reason || '').slice(0, 120)) + '</span>'
     : '';
+  // The budget went by a fallback (call count or an old reading): say so.
+  const quota = data.quota_note
+    ? '<span class="chip" title="' + escHtml(data.quota_note) + '">Usage budget: ' +
+      escHtml(data.quota_note.slice(0, 120)) + '</span>'
+    : '';
   if (data.brain_provider === 'codex') {
-    return paused + chip('Codex', codex) + (data.claude_calls_today ? chip('Claude', data.claude_calls_today) : '');
+    return paused + quota + chip('Codex', codex) + (data.claude_calls_today ? chip('Claude', data.claude_calls_today) : '');
   }
-  return paused + chip('Claude', data.claude_calls_today) + (codex ? chip('Codex', codex) : '');
+  return paused + quota + chip('Claude', data.claude_calls_today) + (codex ? chip('Codex', codex) : '');
 }
 
 function fmtTokens(n) {
