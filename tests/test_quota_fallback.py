@@ -50,10 +50,11 @@ class Endpoint:
 
 
 @pytest.fixture
-def clock(monkeypatch):
+def clock(monkeypatch, tmp_path):
     c = Clock()
-    monkeypatch.setattr(quota_mod.time, "monotonic", c)
+    monkeypatch.setattr(quota_mod.time, "time", c)
     monkeypatch.setattr(quota_mod, "get_oauth_token", lambda: "t")
+    monkeypatch.setattr(quota_mod, "shared_path", lambda: tmp_path / "claude-quota.json")
     return c
 
 
@@ -84,8 +85,9 @@ async def test_429_without_retry_after_backs_off_longer_each_time(monkeypatch, c
     waits = []
     for _ in range(3):
         await q.get_utilization()
-        waits.append(q._cache_ttl)
-        clock.now += q._cache_ttl + 1
+        wait = quota_mod._load_shared()["next_read_at"] - clock.now
+        waits.append(wait)
+        clock.now += wait + 1
     assert waits == [quota_mod.RATE_LIMIT_BACKOFF, quota_mod.RATE_LIMIT_BACKOFF * 2,
                      quota_mod.MAX_BACKOFF]
 
@@ -96,7 +98,7 @@ async def test_recent_reading_is_reused_through_an_outage(monkeypatch, clock):
     q = quota_mod.QuotaClient()
     assert await q.get_utilization() == GOOD
     clock.now += quota_mod.CACHE_TTL_OK + 1
-    assert await q.get_utilization() == GOOD  # 429 now, but the reading is 5 min old
+    assert await q.get_utilization() == GOOD  # 429 now, but the reading is recent
     assert q.status()["source"] == "saved"
     clock.now += quota_mod.STALE_OK
     assert await q.get_utilization() is None  # too old to trust
@@ -184,3 +186,24 @@ def test_usage_page_shows_the_reason_and_the_budget(client, monkeypatch):
     data = client.get("/api/usage").json()
     assert "429" in data["quota_problem"]
     assert "122 of 120" in data["budget_note"]
+
+
+@pytest.mark.asyncio
+async def test_every_process_shares_one_reading(monkeypatch, clock):
+    """The loop, the dashboard and `sellbird status` each make a client; only
+    one asks Anthropic, and a 429 holds for all of them."""
+    e = _endpoint(monkeypatch, [(200, GOOD, {}), (429, {}, {"retry-after": "2000"}), (200, GOOD, {})])
+    loop, dashboard, status = (quota_mod.QuotaClient() for _ in range(3))
+    assert await loop.get_utilization() == GOOD
+    assert await dashboard.get_utilization() == GOOD
+    assert await status.get_utilization() == GOOD
+    assert e.calls == 1
+    clock.now += quota_mod.CACHE_TTL_OK + 1
+    await loop.get_utilization()                # 429, Retry-After 2000 s
+    clock.now += 600
+    assert await dashboard.get_utilization() == GOOD   # the saved reading, no request
+    assert e.calls == 2
+    assert dashboard.status()["source"] == "saved"
+    clock.now += 1500
+    assert await status.get_utilization() == GOOD
+    assert e.calls == 3 and status.status()["source"] == "live"
