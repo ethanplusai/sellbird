@@ -155,3 +155,32 @@ def test_fallback_daily_calls_is_configurable():
     assert UsageConfig(fallback_daily_calls=600).fallback_daily_calls == 600
     with pytest.raises(ValueError):
         UsageConfig(fallback_daily_calls=0)
+
+
+# ── the Usage page says what the budget went by ──
+
+from tests.test_dashboard_signals import client  # noqa: E402,F401  (fixture)
+
+
+def test_usage_page_shows_the_reason_and_the_budget(client, monkeypatch):
+    import asyncio as aio
+
+    import sellbird.dashboard as dash
+
+    class Limited:
+        async def get_utilization(self):
+            return None
+
+        def status(self):
+            return NoQuota().status()
+    monkeypatch.setattr(dash, "_quota_client_for", lambda provider, model="": Limited())
+    monkeypatch.setattr(dash, "_active_brain", lambda: type("B", (), {"provider": "claude",
+                                                                      "model": ""})())
+    st = StateManager(str(client.db_path))
+    aio.run(st.init_db())
+    aio.run(st.set_setting(QUOTA_STATUS_KEY, json.dumps({
+        "provider": "claude", "source": "calls", "calls": 122, "max_calls": 120,
+        "problem": "Anthropic's usage endpoint is rate limiting reads (HTTP 429)"})))
+    data = client.get("/api/usage").json()
+    assert "429" in data["quota_problem"]
+    assert "122 of 120" in data["budget_note"]

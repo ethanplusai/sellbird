@@ -196,9 +196,10 @@ minor versions can still change behaviour.
   429 waits out Retry-After (or 15, 30, then 60 minutes), a good reading up to
   30 minutes old is reused through the outage, and the fallback cap is a
   setting (`usage.fallback_daily_calls`, default 200). `sellbird status`, the
-  dashboard and the pause log line say which signal the budget went by and
-  why, so a pause from the call count is no longer mistaken for the plan
-  running out.
+  Usage page's quota card and the pause log line say which signal the budget
+  went by and why (the card now names the real reason, such as a 429, instead
+  of "check claude login"), so a pause from the call count is no longer
+  mistaken for the plan running out.
 
 - **Instantly's daily cap counts your local day, not UTC** (from #177 by
   @solvejet-team), so the cap resets at your midnight.
