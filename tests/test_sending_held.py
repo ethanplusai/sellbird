@@ -258,3 +258,23 @@ def test_an_imap_login_hold_names_the_fix():
     title, detail = held_message({"reason": reason, "since": "2026-10-24T08:00:00"}, waiting=2)
     assert "couldn't read your inbox" in title
     assert "sellbird inboxes connect" in detail and "2 emails are waiting" in detail
+
+
+# ── a held send phase doesn't win the cycle ──
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("held, action", [(True, "prospect"), (False, "send_campaign")])
+async def test_drafts_held_by_an_unread_inbox_dont_starve_prospecting(held, action):
+    from sellbird.main import decide_next_action
+    email = SimpleNamespace(enabled=True, provider="smtp", require_approval=True)
+    config = SimpleNamespace(channels=SimpleNamespace(email=email))
+    summary = {"draft_campaigns": 4, "new_prospects": 0, "writable_prospects": 0,
+               "sends_held": held}
+    assert await decide_next_action(None, None, config, summary=summary) == action
+
+
+@pytest.mark.asyncio
+async def test_the_summary_says_when_sending_is_held(state):
+    assert (await state.get_state_summary())["sends_held"] is False
+    await state.note_sends_held("IMAP login was refused (invalid credentials).")
+    assert (await state.get_state_summary())["sends_held"] is True

@@ -198,6 +198,12 @@ minor versions can still change behaviour.
   "couldn't read your inbox" with the inbox, the reason and the fix, and every
   failing inbox is named rather than only the last one.
 
+- **Drafts held by an unread inbox no longer stop prospecting and writing.**
+  While sending was held because replies couldn't be read, ready drafts still
+  made `send_campaign` the cycle's job, which deployed nothing, so the Scout
+  and the Writer never ran until the inbox was fixed. A read hold now counts
+  as held, like the sending kill switch.
+
 - **Instantly's daily cap counts your local day, not UTC** (from #177 by
   @solvejet-team), so the cap resets at your midnight.
 
