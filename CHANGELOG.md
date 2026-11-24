@@ -17,10 +17,13 @@ minor versions can still change behaviour.
   recent pace. Searches come in order from the same list the Discover page
   builds, the place is saved across restarts, and after every search has run
   it waits `repeat_after_days` (default 14) before starting again. Only free
-  sources run unless `max_daily_spend` is set. Stop on the Discover page
-  pauses it and Run starts it again. The dashboard header, the Discover page
-  and `sellbird status` show what it's doing, and Today says when it can't
-  run (a missing key, a spending cap, a source that stopped). Off by default.
+  sources run unless `max_daily_spend` is set. The Discover page gets an
+  "Automatic discovery" card with its state and Pause / Resume (pausing stops
+  a run that's going within seconds); a run started by hand there goes first,
+  and the page's Stop clears itself when that run ends instead of stopping
+  the next one. A "Discovery …" line under "Sellbird is running" in the
+  sidebar (click it to open Discover) and `sellbird status` show what it's doing, and Today says when it can't run (a
+  missing key, a spending cap, a source that stopped). Off by default.
 
 - **`writer.require_tip: true` skips prospects with nothing to build a tip
   on.** A first email is meant to name one concrete thing the sender would

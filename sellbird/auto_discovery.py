@@ -12,10 +12,13 @@ When every search (and every configured preset) has run, discovery waits
 ``repeat_after_days`` before starting the list again.
 
 Spending is opt-in: with ``max_daily_spend: 0`` (the default) only a source
-whose estimate is $0 runs. The Discover page's Stop button pauses it, and
-pressing Run there starts it again. What it is doing, and why when it can't,
-is saved under ``discovery_auto`` for `sellbird status`, the dashboard header
-and the Discover page.
+whose estimate is $0 runs. The Discover page's "Automatic discovery" card has
+Pause and Resume (``discovery_auto_paused``); pausing also stops a run that is
+going, within a few seconds. That is separate from the page's own Run and
+Stop, which start and stop one run by hand: while one of those is going,
+automatic discovery waits. What it is doing, and why when it can't, is saved
+under ``discovery_auto`` for `sellbird status`, the dashboard header and the
+Discover page.
 """
 
 import asyncio
@@ -29,9 +32,11 @@ from datetime import datetime, timezone
 logger = logging.getLogger("sellbird.auto_discovery")
 
 AUTO_KEY = "discovery_auto"
-PAUSED_KEY = "discovery_paused"
+AUTO_PAUSED_KEY = "discovery_auto_paused"   # set by Pause on the Discover page
 PAGE_RUN_KEY = "discover_page_run"   # {"pid", "kind", "started"} while the page's run goes
 RETRY_AFTER_PROBLEM = 3600       # a source that can't run is tried again hourly
+WATCH_SECONDS = 5                # how often a running top-up checks for Pause
+PAUSED_REASON = "paused; press Resume on the Discover page to start it again"
 
 
 def _now() -> float:
@@ -85,14 +90,9 @@ async def spent_today(state) -> float:
             return float((await cur.fetchone())[0] or 0.0)
 
 
-def page_run_going(raw: str | None) -> bool:
-    """A run started from the Discover page is still going: the dashboard
-    process that started it (PAGE_RUN_KEY) is alive. A run cut short by a
-    dashboard restart leaves a "running" row behind for hours, so the runs
-    table alone can't say this."""
-    run = parse(raw)
+def _alive(pid) -> bool:
     try:
-        pid = int(run.get("pid") or 0)
+        pid = int(pid or 0)
     except (TypeError, ValueError):
         return False
     if pid <= 0:
@@ -104,6 +104,20 @@ def page_run_going(raw: str | None) -> bool:
     except PermissionError:
         return True
     return True
+
+
+def auto_run_going(raw: str | None) -> bool:
+    """An automatic top-up is running now (its loop process is alive)."""
+    saved = parse(raw)
+    return saved.get("state") == "running" and _alive(saved.get("run_pid"))
+
+
+def page_run_going(raw: str | None) -> bool:
+    """A run started from the Discover page is still going: the dashboard
+    process that started it (PAGE_RUN_KEY) is alive. A run cut short by a
+    dashboard restart leaves a "running" row behind for hours, so the runs
+    table alone can't say this."""
+    return _alive(parse(raw).get("pid"))
 
 
 def threshold(cfg, pace: int) -> int:
@@ -165,10 +179,9 @@ class AutoDiscovery:
         if saved.get("retry_at", 0) > _now():
             return
 
-        if await state.get_setting(PAUSED_KEY):
-            await self._save(state, saved, state="paused",
-                             reason="paused: stopped on the Discover page; press Run there "
-                                    "to start it again")
+        if await state.get_setting(AUTO_PAUSED_KEY):
+            if saved.get("state") != "paused":
+                await self._save(state, saved, state="paused", reason=PAUSED_REASON)
             return
         if page_run_going(await state.get_setting(PAGE_RUN_KEY)):
             await self._save(state, saved, state="waiting",
@@ -242,7 +255,7 @@ class AutoDiscovery:
         saved = await self._save(
             state, saved, state="running", provider=provider_key, signature=signature,
             preset_index=index, cursor=cursor, backlog=backlog, threshold=below,
-            retry_at=0,
+            retry_at=0, run_pid=os.getpid(),
             reason=(f"running: searches {cursor + 1}-{cursor + len(chunk)} of {len(plan)} "
                     f"with {provider.label} ({backlog:,} companies waiting, tops up "
                     f"below {below:,})"))
@@ -260,10 +273,27 @@ class AutoDiscovery:
     async def _run(self, state, config, provider_key, chunk, budget, saved, total) -> None:
         from sellbird.pipeline import run_prospecting
 
+        paused = False
+        run = asyncio.ensure_future(
+            run_prospecting(state, config, provider_key, chunk, max_spend=budget))
         try:
-            report = await run_prospecting(state, config, provider_key, chunk,
-                                           max_spend=budget)
+            # Pause on the Discover page stops the run within a few seconds,
+            # however long the heartbeat sleeps.
+            while not run.done():
+                await asyncio.wait({run}, timeout=WATCH_SECONDS)
+                if not run.done() and await state.get_setting(AUTO_PAUSED_KEY):
+                    run.cancel()
+                    paused = True
+                    break
+            report = await run
             found = report.discover or {}
+        except asyncio.CancelledError:
+            if not paused:
+                run.cancel()  # the loop is shutting down
+                raise
+            # Where it got to isn't known; the chunk runs again on Resume.
+            found = {"queries_ran": 0, "stopped": "paused"}
+            report = None
         except Exception as e:
             logger.exception("automatic discovery run failed")
             found = {"queries_ran": 0, "stopped": str(e)}
@@ -277,8 +307,10 @@ class AutoDiscovery:
                 "cost": float(found.get("actual_cost") or 0.0),
                 "stopped": stopped,
                 "errors": [str(e)[:200] for e in (report.errors if report else [])][:3]}
-        fields = {"cursor": cursor, "last": last}
-        if stopped and not ran:
+        fields = {"cursor": cursor, "last": last, "run_pid": 0}
+        if paused:
+            fields = {"state": "paused", "reason": PAUSED_REASON, "run_pid": 0}
+        elif stopped and not ran:
             fields.update(state="blocked", reason=f"can't run: {stopped}",
                           retry_at=_now() + RETRY_AFTER_PROBLEM)
         elif stopped:
@@ -290,5 +322,8 @@ class AutoDiscovery:
         await self._save(state, {**latest, **{k: v for k, v in saved.items()
                                              if k in ("signature", "preset_index")}},
                          **fields)
+        if paused:
+            logger.info("Discovery: paused from the Discover page; the run was stopped.")
+            return
         logger.info(f"Discovery: {ran} searches, {last['new']} new companies"
                     + (f", stopped: {stopped}" if stopped else "") + ".")

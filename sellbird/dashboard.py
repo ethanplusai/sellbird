@@ -874,8 +874,12 @@ async def get_sellbird_status():
         paused = await state.get_setting("sending_paused") or ""
     except Exception:
         paused = ""
+    try:
+        discovery = await _auto_discovery()
+    except Exception:
+        discovery = {}
     return {"running": pid is not None, "pid": pid, "started_at": started,
-            "sending_paused": paused}
+            "sending_paused": paused, "discovery": discovery}
 
 
 @app.post("/api/sellbird/start")
@@ -1072,7 +1076,6 @@ async def get_stats():
             "codex_calls_today": codex_today,
             "brain_provider": _active_provider(),
             "brain_status": await _brain_status(),
-            "discovery": await _auto_discovery(),
         }
     except Exception as e:
         return {"error": str(e)}
@@ -1100,11 +1103,29 @@ def _active_brain():
 
 
 async def _auto_discovery() -> dict:
-    """Automatic discovery's state and one-line status (auto_discovery.py)."""
+    """Automatic discovery's state and one-line status (auto_discovery.py),
+    whether sellbird.yaml turns it on, and whether it's paused here."""
     from sellbird import auto_discovery
-    rows = await query_db("SELECT value FROM settings WHERE key = ?", (auto_discovery.AUTO_KEY,))
-    state, line = auto_discovery.describe(auto_discovery.parse(rows[0]["value"] if rows else ""))
-    return {"state": state, "line": line}
+    from sellbird.config import load_config
+    rows = await query_db("SELECT key, value FROM settings WHERE key IN (?, ?)",
+                          (auto_discovery.AUTO_KEY, auto_discovery.AUTO_PAUSED_KEY))
+    values = {r["key"]: r["value"] for r in rows}
+    try:
+        enabled = bool(load_config().discovery.auto)
+    except Exception:
+        enabled = False
+    saved = auto_discovery.parse(values.get(auto_discovery.AUTO_KEY))
+    if not enabled:
+        saved = {}  # whatever it last did, it's off now
+    state, line = auto_discovery.describe(saved)
+    paused = bool(values.get(auto_discovery.AUTO_PAUSED_KEY))
+    if enabled and paused and state != "paused":
+        # Paused here; the loop notices at its next check.
+        state, line = "paused", auto_discovery.PAUSED_REASON
+    elif enabled and not paused and _check_sellbird_pid() is None:
+        # It runs inside the loop: with Sellbird stopped, nothing tops up.
+        state, line = "stopped", "stopped: Sellbird isn't running, and automatic discovery runs inside it"
+    return {"state": state, "line": line, "enabled": enabled, "paused": paused}
 
 
 async def _brain_status() -> dict:
@@ -2068,13 +2089,16 @@ async def _note_page_run(state, kind: str):
 
 
 async def _page_run(state, run):
-    """Run a page-started job, then clear the note however it ends."""
+    """Run a page-started job, then clear the note however it ends. Stop is
+    for this one run, so its kill switch is cleared with it: left set, it
+    would stop the next run before its first search."""
     from sellbird.auto_discovery import PAGE_RUN_KEY
     try:
         await run
     finally:
         try:
             await state.set_setting(PAGE_RUN_KEY, "")
+            await state.set_setting("discovery_paused", "")
         except Exception:
             pass
 
@@ -2102,6 +2126,13 @@ async def start_discovery(request: Request):
             return JSONResponse({"success": False,
                                  "message": f"unknown provider {provider!r}"},
                                 status_code=400)
+
+        from sellbird.auto_discovery import AUTO_KEY, auto_run_going
+        if auto_run_going(await _state().get_setting(AUTO_KEY)):
+            return JSONResponse({"success": False,
+                                 "message": "Automatic discovery is running searches right now. "
+                                            "Pause it above, or run this when it's done."},
+                                status_code=409)
 
         config = load_config()
         try:
@@ -2187,6 +2218,34 @@ async def start_profile():
         await _note_page_run(state, _discovery_kind)
         _discovery_task = asyncio.create_task(_page_run(state, _go()))
         return {"success": True, "pending": pending}
+    except Exception as e:
+        return JSONResponse({"success": False, "message": str(e)}, status_code=500)
+
+
+@app.post("/api/discover/auto/{action}")
+async def pause_auto_discovery(action: str):
+    """Pause or resume automatic discovery. Pausing also stops a top-up that
+    is running, within a few seconds; resuming lets the loop's next check
+    decide whether one is due."""
+    from sellbird import auto_discovery as A
+    if action not in ("pause", "resume"):
+        return JSONResponse({"success": False, "message": "use pause or resume"},
+                            status_code=400)
+    try:
+        state = _state()
+        await state.init_db()
+        saved = A.parse(await state.get_setting(A.AUTO_KEY))
+        if action == "pause":
+            await state.set_setting(A.AUTO_PAUSED_KEY, "paused from the Discover page")
+            if saved.get("state", "off") != "off":
+                saved.update(state="paused", reason=A.PAUSED_REASON)
+        else:
+            await state.set_setting(A.AUTO_PAUSED_KEY, "")
+            if saved.get("state") == "paused":
+                saved.update(state="waiting", retry_at=0,
+                             reason="waiting: resumed; it checks again at the next heartbeat")
+        await state.set_setting(A.AUTO_KEY, json.dumps(saved))
+        return {"success": True, "auto": await _auto_discovery()}
     except Exception as e:
         return JSONResponse({"success": False, "message": str(e)}, status_code=500)
 
@@ -2488,11 +2547,11 @@ async def get_today():
             })
 
         auto = await _auto_discovery()
-        if auto["state"] in ("blocked", "paused"):
+        if auto["state"] == "blocked":
+            # Paused is a choice made on the Discover page, so it isn't flagged.
             items.append({
                 "key": "discovery", "tone": "warn",
-                "title": ("Automatic discovery can't run" if auto["state"] == "blocked"
-                          else "Automatic discovery is paused"),
+                "title": "Automatic discovery can't run",
                 "detail": auto["line"][0].upper() + auto["line"][1:] + ".",
                 "action": "Open Discover", "tab": "discover",
             })
