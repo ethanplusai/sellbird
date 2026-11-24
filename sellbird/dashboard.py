@@ -1072,6 +1072,7 @@ async def get_stats():
             "codex_calls_today": codex_today,
             "brain_provider": _active_provider(),
             "brain_status": await _brain_status(),
+            "discovery": await _auto_discovery(),
         }
     except Exception as e:
         return {"error": str(e)}
@@ -1096,6 +1097,14 @@ def _active_brain():
         return load_brain_config()
     except Exception:
         return None
+
+
+async def _auto_discovery() -> dict:
+    """Automatic discovery's state and one-line status (auto_discovery.py)."""
+    from sellbird import auto_discovery
+    rows = await query_db("SELECT value FROM settings WHERE key = ?", (auto_discovery.AUTO_KEY,))
+    state, line = auto_discovery.describe(auto_discovery.parse(rows[0]["value"] if rows else ""))
+    return {"state": state, "line": line}
 
 
 async def _brain_status() -> dict:
@@ -2016,6 +2025,7 @@ async def get_discovery_providers():
             "running_kind": _discovery_kind,
             "unprofiled": await state.count_companies_needing_profile(),
             "last_report": _discovery_report,
+            "auto": await _auto_discovery(),
         }
     except Exception as e:
         logger.exception("discovery providers failed")
@@ -2454,6 +2464,16 @@ async def get_today():
             items.append({
                 "key": "sends-held", "tone": "bad", "title": title, "detail": detail,
                 "action": "Open the log", "tab": "controls",
+            })
+
+        auto = await _auto_discovery()
+        if auto["state"] in ("blocked", "paused"):
+            items.append({
+                "key": "discovery", "tone": "warn",
+                "title": ("Automatic discovery can't run" if auto["state"] == "blocked"
+                          else "Automatic discovery is paused"),
+                "detail": auto["line"][0].upper() + auto["line"][1:] + ".",
+                "action": "Open Discover", "tab": "discover",
             })
 
         if paused:

@@ -875,6 +875,13 @@ async function loadDiscoverProviders() {
   const data = await api('/api/discover/providers');
   if (!data || !data.providers) { el.innerHTML = offlineState(); return; }
 
+  const autoEl = document.getElementById('discover-auto');
+  if (autoEl) {
+    const a = data.auto || {};
+    autoEl.innerHTML = '<div class="card"><b>Automatic discovery:</b> ' + escHtml(a.line || 'off') +
+      (a.state === 'off' ? '' : '<div class="muted">Stop pauses it; Run starts it again.</div>') +
+      '</div>';
+  }
   _provider = _provider || data.selected || data.default;
   el.innerHTML = '<div class="prov-grid">' + data.providers.map(p => {
     const ready = p.configured
@@ -1487,10 +1494,16 @@ function brainCallChips(data) {
       escHtml(st.provider === 'codex' ? 'Codex' : 'Brain') + ' <b>paused</b>: ' +
       escHtml((st.reason || '').slice(0, 120)) + '</span>'
     : '';
+  // Automatic discovery, on every page: what it's doing, or why it can't.
+  const d = data.discovery || {};
+  const discovery = d.state && d.state !== 'off'
+    ? '<span class="chip" title="' + escHtml(d.line || '') + '">Discovery <b>' +
+      escHtml(d.state) + '</b></span>'
+    : '';
   if (data.brain_provider === 'codex') {
-    return paused + chip('Codex', codex) + (data.claude_calls_today ? chip('Claude', data.claude_calls_today) : '');
+    return paused + discovery + chip('Codex', codex) + (data.claude_calls_today ? chip('Claude', data.claude_calls_today) : '');
   }
-  return paused + chip('Claude', data.claude_calls_today) + (codex ? chip('Codex', codex) : '');
+  return paused + discovery + chip('Claude', data.claude_calls_today) + (codex ? chip('Codex', codex) : '');
 }
 
 function fmtTokens(n) {
