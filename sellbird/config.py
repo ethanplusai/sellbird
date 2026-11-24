@@ -536,6 +536,16 @@ def _fold_accents(text: str) -> str:
 
 # "Click" in Hebrew: a footer has no link to click.
 _HEBREW_CLICK_RE = re.compile(r"(?<!\w)ו?(?:לחצו|לחצי|לחץ\s+(?:כאן|על)|הקליקו|הקליקי|הקלק)(?!\w)")
+# "Click" in Arabic: a plain-text cold email opt-out line has no link to click.
+_ARABIC_CLICK_RE = re.compile(r"(?<!\w)[وفبكل]?(?:اضغط(?:وا|ي)?|انقر(?:وا|ي)?)\s+(?:هنا|على\s+الرابط)(?!\w)")
+# Arabic opt-out wording ("غير مهتم؟ فقط أخبرني ولن أراسلك مرة أخرى", "لإلغاء الاشتراك أرسل توقف").
+_SAYS_IT_STOPS_AR_RE = re.compile(
+    r"(?:غير\s+مهتم|لا\s+شكرا|لا\s+شكراً|إلغاء\s+الاشتراك|الغاء\s+الاشتراك"
+    r"|توقف(?:\s+عن)?|إيقاف\s+الرسائل|ايقاف\s+الرسائل|احذفني|إزالة|ازالة"
+    r"|لن\s+(?:أراسلك|اراسلك|نراسلك|نراسلكم|أزعجك|ازعجك|أتواصل|اتواصل|نتواصل|أرسل|ارسل|نرسل)"
+    r"|عدم\s+(?:المراسلة|التواصل|الإرسال|الارسال)|تود\s+إيقاف|ترغب\s+في\s+إيقاف)",
+    re.IGNORECASE,
+)
 
 
 class ComplianceConfig(BaseModel):
@@ -597,14 +607,15 @@ class ComplianceConfig(BaseModel):
             return v
         folded = _fold_accents(v)
         if (any(bit in lowered for bit in ("http", "www.", "click", "@"))
-                or _HEBREW_CLICK_RE.search(v) or _FRENCH_CLICK_RE.search(folded)):
+                or _HEBREW_CLICK_RE.search(v) or _FRENCH_CLICK_RE.search(folded)
+                or _ARABIC_CLICK_RE.search(v)):
             raise ValueError(
                 "opt_out_line can't contain a link or an email address: cold email "
                 "allows one link, and opting out must be as simple as replying."
             )
         if not (_SAYS_IT_STOPS_RE.search(v) or _SAYS_IT_STOPS_HE_RE.search(v)
                 or _SAYS_IT_STOPS_ES_RE.search(v) or _SAYS_IT_STOPS_IT_RE.search(v)
-                or _SAYS_IT_STOPS_FR_RE.search(folded)):
+                or _SAYS_IT_STOPS_FR_RE.search(folded) or _SAYS_IT_STOPS_AR_RE.search(v)):
             raise ValueError(
                 "opt_out_line doesn't tell people they can stop these emails. Say so in "
                 "any words (\"Not interested? Just let me know and I won't email you "
