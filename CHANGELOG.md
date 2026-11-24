@@ -9,6 +9,10 @@ minor versions can still change behaviour.
 
 ### Added
 
+- **`icp.company_search_word`** sets the word Scout's company search adds
+  after industry and place (default "company"). Set `empresa` for a
+  Spanish-language market.
+
 - **`writer.require_tip: true` skips prospects with nothing to build a tip
   on.** A first email is meant to name one concrete thing the sender would
   change; with no finding about the company, the draft could only say it had no
@@ -29,6 +33,12 @@ minor versions can still change behaviour.
   before. On by default, so nothing changes unless you turn it off.
 
 ### Changed
+
+- **Scout's company search reaches every industry and place.** It ran only
+  the first two industries in the first geography, and quoted
+  `icp.company_size` into the query as an exact phrase, so a size like
+  "20-1000 employees" returned nothing. Queries now walk every industry and
+  place, three a cycle, and size is checked after the search.
 
 - **The writer sees what Sellbird read off a company's own site.** The free
   homepage signals (no structured data, a site untouched for six months, a very

@@ -114,6 +114,12 @@ are left out of the search, since a board page names a board, not a website
 to profile. Confirm `HIRING_ROLE` and profiling reads the board their site links
 to and records the role; the search hit alone records nothing.
 
+Scout's own company search runs `"<industry>" "<place>" company`, walking every
+industry and place three searches a cycle. For another language set
+`icp.company_search_word` (`empresa` for Spanish), so it finds companies rather
+than English-language directories. Company size is checked after the search,
+never put in it.
+
 Cities geocode themselves (cached forever, one lookup each). Directories, aggregators and institutions are filtered by pattern, not a blocklist — `en.wikipedia.org` and `biz.yelp.com` never make it in.
 
 > **Depth 20–30, not 100.** Google removed 100-results-per-page in September 2025, so depth 100 is now billed as ten pages nearly everywhere. Below rank 30 it is mostly directories anyway.

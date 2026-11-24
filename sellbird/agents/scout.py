@@ -1011,7 +1011,16 @@ class Scout:
         """Find ICP-matching companies via web search."""
         companies = []
 
-        for query in self._build_company_search_queries():
+        try:
+            offset = int(await self.state.get_setting("scout_query_offset", "0") or 0)
+        except ValueError:
+            offset = 0
+        queries = self._build_company_search_queries(offset)
+        pairs = len(self._company_search_pairs())
+        await self.state.set_setting(
+            "scout_query_offset", str((offset + len(queries)) % max(pairs, 1)))
+
+        for query in queries:
             if self._queries_this_cycle >= MAX_QUERIES_PER_CYCLE:
                 break
 
@@ -1175,38 +1184,42 @@ class Scout:
         seen = set()
         return [d for d in domains if not (d in seen or seen.add(d))][:5]
 
-    def _build_company_search_queries(self) -> list[str]:
-        """Build search queries to find ICP-matching companies."""
+    def _company_search_pairs(self) -> list[tuple[str, str]]:
+        """Every (industry, geography) pair, industries varying fastest so a
+        rotation reaches every industry before it repeats a place."""
+        industries = [i for i in (self.config.icp.industries or []) if i] or [""]
+        geos = [g for g in (self.config.icp.geography or []) if g] or [""]
+        return [(industry, geo) for geo in geos for industry in industries]
+
+    def _build_company_search_queries(self, offset: int = 0) -> list[str]:
+        """Build search queries to find ICP-matching companies.
+
+        Walks the industry x geography pairs from `offset`, so successive
+        cycles search different pairs instead of the first two industries
+        forever. Company size is never put in the query: no page says
+        "20-1000 employees" verbatim, so quoting it returned nothing. Size is
+        checked after discovery instead.
+        """
+        pairs = self._company_search_pairs()
+        word = (getattr(self.config.icp, "company_search_word", "") or "").strip() or "company"
         queries = []
-        industries = self.config.icp.industries or [""]
-        geos = self.config.icp.geography or [""]
-        size = self.config.icp.company_size or ""
-
-        for industry in industries[:2]:
-            geo = geos[0] if geos else ""
-
-            parts = []
-            if industry:
-                parts.append(f'"{industry}"')
-            if geo:
-                parts.append(f'"{geo}"')
-            if size:
-                parts.append(f'"{size}"')
-            parts.append("company")
+        for i in range(len(pairs)):
+            industry, geo = pairs[(offset + i) % len(pairs)]
+            parts = [f'"{p}"' for p in (industry, geo) if p]
+            parts.append(word)
             queries.append(" ".join(parts))
-
-            if geo and industry:
-                queries.append(f'top "{industry}" companies {geo}')
+            if len(queries) >= MAX_QUERIES_PER_CYCLE:
+                break
 
         # Drop empties / dupes, cap to budget.
         seen = set()
         out = []
         for q in queries:
             q = q.strip()
-            if q and q != "company" and q not in seen:
+            if q and q != word and q not in seen:
                 seen.add(q)
                 out.append(q)
-        return out[:3]
+        return out[:MAX_QUERIES_PER_CYCLE]
 
     async def _resolve_email(
         self, first_name: str, last_name: str, domain: str
