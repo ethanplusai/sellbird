@@ -656,6 +656,10 @@ class QuietHoursConfig(BaseModel):
     start: str = "22:00"
     end: str = "07:00"
     timezone: str = "America/New_York"
+    # true: work that contacts no one (reading sites, prospecting, writing
+    # drafts) carries on through quiet hours. Replies and sending keep to
+    # them either way: only cold email due in its recipient's send_window goes.
+    background_work: bool = False
 
     @field_validator("start", "end")
     @classmethod
