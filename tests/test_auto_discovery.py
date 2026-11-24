@@ -59,7 +59,11 @@ def _config(**overrides):
     config = load_config()
     fields = {"auto": True, "provider": "fake", "queries_per_run": 2, "min_backlog": 5}
     fields.update(overrides)
-    return config.model_copy(update={"discovery": DiscoveryConfig(**fields)})
+    # Its own search list (3 trades x 2 towns), whatever sellbird.yaml says.
+    icp = config.icp.model_copy(update={
+        "industries": ["roofer", "plumber", "electrician"],
+        "geography": ["Springfield", "Shelbyville"], "keyword_variants": {}})
+    return config.model_copy(update={"discovery": DiscoveryConfig(**fields), "icp": icp})
 
 
 async def _status(state):
@@ -147,10 +151,24 @@ async def test_stop_on_the_discover_page_pauses_it(state, source, runs):
 
 @pytest.mark.asyncio
 async def test_a_run_from_the_discover_page_goes_first(state, source, runs):
-    await state.start_run("discover", provider="fake")
+    import os
+    await state.set_setting(A.PAGE_RUN_KEY, json.dumps({"pid": os.getpid(), "kind": "discover"}))
     await _tick_and_finish(A.AutoDiscovery(), state, _config())
     assert runs == []
     assert "Discover page" in (await _status(state))["reason"]
+
+
+@pytest.mark.asyncio
+async def test_a_page_run_cut_short_by_a_restart_doesnt_block_it(state, source, runs, monkeypatch):
+    # The dashboard that started it is gone, and its run row still says running.
+    await state.start_run("discover", provider="fake")
+    await state.set_setting(A.PAGE_RUN_KEY, json.dumps({"pid": 999999, "kind": "discover"}))
+
+    def gone(pid, sig):
+        raise ProcessLookupError
+    monkeypatch.setattr(A.os, "kill", gone)
+    await _tick_and_finish(A.AutoDiscovery(), state, _config())
+    assert len(runs) == 1
 
 
 @pytest.mark.asyncio

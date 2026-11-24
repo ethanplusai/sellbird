@@ -22,6 +22,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import os
 import time
 from datetime import datetime, timezone
 
@@ -29,8 +30,8 @@ logger = logging.getLogger("sellbird.auto_discovery")
 
 AUTO_KEY = "discovery_auto"
 PAUSED_KEY = "discovery_paused"
+PAGE_RUN_KEY = "discover_page_run"   # {"pid", "kind", "started"} while the page's run goes
 RETRY_AFTER_PROBLEM = 3600       # a source that can't run is tried again hourly
-DASHBOARD_RUN_FRESH_HOURS = 2    # an older "running" row was left by a crash
 
 
 def _now() -> float:
@@ -84,24 +85,25 @@ async def spent_today(state) -> float:
             return float((await cur.fetchone())[0] or 0.0)
 
 
-async def other_run_going(state, ignore_from: str = "") -> bool:
-    """A discovery or profile run started elsewhere (the Discover page).
-    ``ignore_from`` skips rows from this module's own run that a restart cut
-    short (they stay "running" in the table)."""
-    async with state._connect() as db:
-        async with db.execute(
-            "SELECT COUNT(*) FROM runs WHERE stage IN ('discover', 'profile') "
-            "AND status = 'running' AND started_at >= datetime('now', ?) "
-            "AND (? = '' OR started_at < ?)",
-            (f"-{DASHBOARD_RUN_FRESH_HOURS} hours", ignore_from, ignore_from),
-        ) as cur:
-            return int((await cur.fetchone())[0] or 0) > 0
-
-
-async def _db_now(state) -> str:
-    async with state._connect() as db:
-        async with db.execute("SELECT datetime('now', '-5 seconds')") as cur:
-            return (await cur.fetchone())[0]
+def page_run_going(raw: str | None) -> bool:
+    """A run started from the Discover page is still going: the dashboard
+    process that started it (PAGE_RUN_KEY) is alive. A run cut short by a
+    dashboard restart leaves a "running" row behind for hours, so the runs
+    table alone can't say this."""
+    run = parse(raw)
+    try:
+        pid = int(run.get("pid") or 0)
+    except (TypeError, ValueError):
+        return False
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
 
 
 def threshold(cfg, pace: int) -> int:
@@ -168,8 +170,7 @@ class AutoDiscovery:
                              reason="paused: stopped on the Discover page; press Run there "
                                     "to start it again")
             return
-        cut_short = saved.get("run_started") if saved.get("state") == "running" else ""
-        if await other_run_going(state, cut_short or ""):
+        if page_run_going(await state.get_setting(PAGE_RUN_KEY)):
             await self._save(state, saved, state="waiting",
                              reason="waiting: a run started from the Discover page is going")
             return
@@ -241,7 +242,7 @@ class AutoDiscovery:
         saved = await self._save(
             state, saved, state="running", provider=provider_key, signature=signature,
             preset_index=index, cursor=cursor, backlog=backlog, threshold=below,
-            retry_at=0, run_started=await _db_now(state),
+            retry_at=0,
             reason=(f"running: searches {cursor + 1}-{cursor + len(chunk)} of {len(plan)} "
                     f"with {provider.label} ({backlog:,} companies waiting, tops up "
                     f"below {below:,})"))

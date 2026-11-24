@@ -2060,6 +2060,25 @@ async def estimate_discovery(request: Request):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
+async def _note_page_run(state, kind: str):
+    """Tell the loop's automatic discovery a page run is going (it waits)."""
+    from sellbird.auto_discovery import PAGE_RUN_KEY
+    await state.set_setting(PAGE_RUN_KEY, json.dumps(
+        {"pid": os.getpid(), "kind": kind, "started": datetime.now(timezone.utc).isoformat()}))
+
+
+async def _page_run(state, run):
+    """Run a page-started job, then clear the note however it ends."""
+    from sellbird.auto_discovery import PAGE_RUN_KEY
+    try:
+        await run
+    finally:
+        try:
+            await state.set_setting(PAGE_RUN_KEY, "")
+        except Exception:
+            pass
+
+
 @app.post("/api/discover/run")
 async def start_discovery(request: Request):
     """Kick off a run in the background and hand back immediately.
@@ -2117,7 +2136,8 @@ async def start_discovery(request: Request):
                 _discovery_report = {"errors": [str(exc)], "stopped": "failed"}
 
         _discovery_report = None
-        _discovery_task = asyncio.create_task(_go())
+        await _note_page_run(state, _discovery_kind)
+        _discovery_task = asyncio.create_task(_page_run(state, _go()))
         return {"success": True, "queries": len(queries)}
     except Exception as e:
         return JSONResponse({"success": False, "message": str(e)}, status_code=500)
@@ -2164,7 +2184,8 @@ async def start_profile():
         global _discovery_kind
         _discovery_kind = "profile"
         _discovery_report = None
-        _discovery_task = asyncio.create_task(_go())
+        await _note_page_run(state, _discovery_kind)
+        _discovery_task = asyncio.create_task(_page_run(state, _go()))
         return {"success": True, "pending": pending}
     except Exception as e:
         return JSONResponse({"success": False, "message": str(e)}, status_code=500)
