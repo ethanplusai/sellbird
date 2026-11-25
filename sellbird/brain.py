@@ -536,14 +536,19 @@ class Brain:
         """Split CLI JSON output into (response_text, result_payload).
 
         With ``--output-format json`` stdout is one JSON object whose
-        ``result`` field is the model's text. If parsing fails (older CLI,
-        truncated output), fall back to treating stdout as plain text so a
-        formatting change can never break Sellbird's pipeline.
+        ``result`` field is the model's text; newer CLIs print the whole
+        event list instead, with that object as its ``result`` event. If
+        parsing fails (older CLI, truncated output), fall back to treating
+        stdout as plain text so a formatting change can never break
+        Sellbird's pipeline.
         """
         try:
             payload = json.loads(raw)
         except json.JSONDecodeError:
             return raw, None
+        if isinstance(payload, list):
+            payload = next((e for e in reversed(payload)
+                            if isinstance(e, dict) and e.get("type") == "result"), None)
         if not isinstance(payload, dict) or payload.get("type") != "result":
             return raw, None
         return str(payload.get("result") or ""), payload

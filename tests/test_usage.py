@@ -111,6 +111,19 @@ def test_parse_result_payload_json():
     assert payload["session_id"] == "f362e409-925c-4eb1-ba98-60484bb2dcf5"
 
 
+def test_parse_result_payload_event_list():
+    # Newer CLIs print every event; the result event carries text and usage.
+    events = [{"type": "system", "subtype": "init"},
+              {"type": "assistant", "message": {"content": []}},
+              SAMPLE_RESULT]
+    text, payload = Brain._parse_result_payload(json.dumps(events))
+    assert text == "Hello from Claude"
+    assert payload == SAMPLE_RESULT
+    # A list with no result event stays verbatim, like any other non-envelope
+    raw = json.dumps([{"type": "system"}])
+    assert Brain._parse_result_payload(raw) == (raw, None)
+
+
 def test_parse_result_payload_plain_text_fallback():
     text, payload = Brain._parse_result_payload("just plain text output")
     assert text == "just plain text output"
