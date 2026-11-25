@@ -195,6 +195,12 @@ sellbird dashboard
   English, Spanish and Hebrew lines already were, so an Italian sender no
   longer needs a bilingual footer. A sign-off like "A presto!" is still
   refused. Italian replies are still read by the model, not by rule.
+- **A German `compliance.opt_out_line` passes validation.** "Kein Interesse?
+  Eine kurze Antwort genügt, dann schreibe ich Ihnen nicht mehr." is accepted,
+  with or without umlauts, so German cold email no longer goes out with an
+  English footer. A sign-off like "Mit freundlichen Grüßen" is still refused,
+  and a line that says "klicken" is refused like "click". German replies are
+  still read by the model, not by rule.
 - **`channels.email.follow_ups: false` sends no follow-ups.** A campaign then
   stages only its first email on Gmail, Microsoft and SMTP, so steps 2 and 3
   can't go to someone who never answered. Replies are read and answered as
