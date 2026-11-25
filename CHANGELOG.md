@@ -423,6 +423,11 @@ sellbird dashboard
 
 ### Fixed
 
+- **Accented names no longer lose letters in guessed addresses.** The email
+  finder dropped every accented letter instead of transliterating it, so a
+  surname like "Valès" became `vals@` rather than `vales@`, and the verifier
+  rejected a wrong address. Accents now fold to their base letter, and
+  ligatures such as œ, æ and ß become oe, ae and ss.
 - **Instantly's daily cap counts your local day, not UTC** (from #177 by
   @solvejet-team), so the cap resets at your midnight.
 - **A fresh install reads right with nothing in it.** `sellbird status` prints
