@@ -21,6 +21,7 @@ def test_pipeline_buckets_each_contact_once(client):
               ("f", "replied"), ("g", "replied"), ("h", "lost"), ("i", "opted_out"), ("j", "replied"), ("k", "contacted")]
     for pid, status in people:
         _sql(db, "INSERT INTO prospects (id, first_name, status) VALUES (?, 'X', ?)", (pid, status))
+    _sql(db, "UPDATE prospects SET email = 'a@example.com', email_status = 'verified' WHERE id = 'a'")
     _sql(db, "UPDATE prospects SET email_status = 'invalid' WHERE id = 'k'")   # bounced
     convos = [
         ("c1", "d", "question", "engaged", "2026-10-01"),
@@ -35,9 +36,34 @@ def test_pipeline_buckets_each_contact_once(client):
         _sql(db, "INSERT INTO conversations (id, prospect_id, intent, stage, updated_at) VALUES (?,?,?,?,?)",
              (cid, pid, intent, stage, at))
     pipe = client.get("/api/stats").json()["pipeline"]
-    assert pipe == {"to_write": 2, "contacted": 1, "replied": 1, "interested": 2,
-                    "ready_to_meet": 1, "closed_out": 4}
+    assert pipe == {"need_email": 0, "to_write": 1, "drafted": 1, "contacted": 1, "replied": 1,
+                    "interested": 2, "ready_to_meet": 1, "closed_out": 4}
     assert sum(pipe.values()) == len(people)
+
+
+def test_to_write_counts_only_who_the_writer_can_write_to(client):
+    """'To write' matches the loop's writable count: a new contact with a
+    verified or catch-all address. A guessed or missing address waits for an
+    email, an invalid one is closed out, and a drafted one is in the Outbox."""
+    db = client.db_path
+    asyncio.run(StateManager(str(db)).init_db())
+    people = [
+        ("v", "new", "v@example.com", "verified"),
+        ("r", "new", "r@example.com", "risky"),
+        ("g", "new", "g@example.com", "guess"),
+        ("n", "new", "", ""),
+        ("x", "new", "x@example.com", "invalid"),
+        ("q", "queued", "q@example.com", "verified"),
+    ]
+    for pid, status, email, email_status in people:
+        _sql(db, "INSERT INTO prospects (id, first_name, status, email, email_status) "
+                 "VALUES (?, 'X', ?, ?, ?)", (pid, status, email, email_status))
+    pipe = client.get("/api/stats").json()["pipeline"]
+    assert pipe["to_write"] == 2
+    assert pipe["to_write"] == asyncio.run(StateManager(str(db)).count_writable_prospects())
+    assert pipe["need_email"] == 2
+    assert pipe["drafted"] == 1
+    assert pipe["closed_out"] == 1
 
 
 def test_discover_tab_knows_how_many_sites_are_unread(client):

@@ -33,6 +33,7 @@ from sellbird import dashboard_auth as auth  # noqa: E402
 from sellbird.paths import PACKAGE_ROOT, PROJECT_ROOT, is_checkout  # noqa: E402
 from sellbird import storage  # noqa: E402
 from sellbird.pidfile import LOCK_FILE, loop_lock_held, pid_alive  # noqa: E402
+from sellbird.state import WRITABLE_EMAIL_STATUSES, _company_answered  # noqa: E402
 from sellbird.textio import read_user_text  # noqa: E402
 from sellbird.workspace_home import NotOnHosted, use_home  # noqa: E402
 DB_PATH = PROJECT_ROOT / "data" / "sellbird.db"
@@ -995,11 +996,23 @@ async def get_sellbird_logs():
 
 
 def _pipeline_bucket(status: str | None, stage: str | None, intent: str | None,
-                     email_status: str | None = None) -> str:
-    """One funnel stage per contact, from its status and latest conversation."""
+                     email_status: str | None = None, email: str | None = None,
+                     answered: bool = False) -> str:
+    """One funnel stage per contact, from its status and latest conversation.
+
+    'To write' is who the Writer can draft for (state.count_writable_prospects):
+    a new contact with a verified or catch-all address whose company hasn't
+    answered. Counting guessed addresses and drafts there made a big 'To
+    write' sit beside a loop logging that nothing was ready to write."""
     status = status or "new"
-    if status in ("new", "queued"):
-        return "to_write"
+    if status == "queued":
+        return "drafted"
+    if status == "new":
+        if email_status == "invalid" or answered:
+            return "closed_out"
+        if email and email_status in WRITABLE_EMAIL_STATUSES:
+            return "to_write"
+        return "need_email"
     if status == "contacted":
         # A bounce leaves the status alone and marks the address invalid.
         return "closed_out" if email_status == "invalid" else "contacted"
@@ -1012,6 +1025,10 @@ def _pipeline_bucket(status: str | None, stage: str | None, intent: str | None,
             return "interested"
         return "replied"
     return "closed_out"   # lost, opted out, bounced, unwritable
+
+
+PIPELINE_STAGES = ("need_email", "to_write", "drafted", "contacted", "replied",
+                   "interested", "ready_to_meet", "closed_out")
 
 
 @app.get("/api/stats")
@@ -1036,18 +1053,19 @@ async def get_stats():
 
         # Where each contact stands. Prospect status alone stops at
         # "replied"; how a reply went lives on its latest conversation.
-        rows = await query_db("""
-            SELECT p.status, p.email_status, l.stage, l.intent, COUNT(*) AS count FROM prospects p
+        rows = await query_db(f"""
+            SELECT p.status, p.email_status, COALESCE(p.email, '') != '' AS has_email,
+                   CASE WHEN p.status = 'new' THEN {_company_answered('p')} ELSE 0 END AS answered,
+                   l.stage, l.intent, COUNT(*) AS count FROM prospects p
             LEFT JOIN (SELECT prospect_id, stage, intent, ROW_NUMBER() OVER (
                          PARTITION BY prospect_id ORDER BY updated_at DESC, created_at DESC) AS rn
                        FROM conversations) l ON l.prospect_id = p.id AND l.rn = 1
-            GROUP BY p.status, p.email_status, l.stage, l.intent
+            GROUP BY 1, 2, 3, 4, l.stage, l.intent
         """)
-        pipeline = dict.fromkeys(
-            ("to_write", "contacted", "replied", "interested", "ready_to_meet", "closed_out"), 0)
+        pipeline = dict.fromkeys(PIPELINE_STAGES, 0)
         for r in rows:
-            pipeline[_pipeline_bucket(r["status"], r["stage"], r["intent"],
-                                      r["email_status"])] += r["count"]
+            pipeline[_pipeline_bucket(r["status"], r["stage"], r["intent"], r["email_status"],
+                                      "x" if r["has_email"] else "", bool(r["answered"]))] += r["count"]
 
         actions = await query_db("SELECT COUNT(*) as count FROM actions")
         action_count = actions[0]["count"] if actions else 0

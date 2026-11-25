@@ -583,7 +583,11 @@ async function loadFunnel() {
   const total = (data.prospects || {}).total || 0;
   const pipe = data.pipeline || {};
   const stages = [
+    // Only 'To write' is the Writer's queue; a guessed address waits for the
+    // verifier first, and a draft waits for you in the Outbox.
+    ['Need an email', pipe.need_email || 0, 'c-faint'],
     ['To write', pipe.to_write || 0, 'c-accent-soft'],
+    ['Drafted', pipe.drafted || 0, 'c-wait'],
     ['Contacted', pipe.contacted || 0, 'c-accent'],
     ['Replied', pipe.replied || 0, 'c-active'],
     ['Interested', pipe.interested || 0, 'c-good'],
@@ -2193,7 +2197,9 @@ function fbCampaign(i) {
 let _contactQuery = '', _contactFilter = 'all';
 const CONTACT_FILTERS = [
   ['all', 'All', null],
-  ['todo', 'To write', ['new', 'queued']],
+  ['email', 'Need an email', p => p.status === 'new' && !writable(p) && p.email_status !== 'invalid'],
+  ['todo', 'To write', p => p.status === 'new' && writable(p)],
+  ['drafted', 'Drafted', ['queued']],
   ['contacted', 'Contacted', ['contacted']],
   ['replied', 'Replied', ['replied', 'interested', 'meeting']],
   ['closed', 'Closed out', null],
@@ -2222,12 +2228,17 @@ async function loadProspects() {
   renderContacts();
 }
 
+// The Writer drafts only for a verified or catch-all address (state.py
+// WRITABLE_EMAIL_STATUSES).
+function writable(p) { return !!p.email && ['verified', 'risky'].includes(p.email_status); }
+
 function contactMatches(p, f) {
   const known = ['new', 'queued', 'contacted', 'replied', 'interested', 'meeting'];
   if (f === 'all') return true;
-  if (f === 'closed') return !known.includes(p.status);
+  if (f === 'closed') return !known.includes(p.status) || (p.status === 'new' && p.email_status === 'invalid');
   const hit = CONTACT_FILTERS.find(x => x[0] === f);
-  return !!(hit && hit[2] && hit[2].includes(p.status));
+  if (!hit || !hit[2]) return false;
+  return typeof hit[2] === 'function' ? hit[2](p) : hit[2].includes(p.status);
 }
 
 function setContactFilter(f) { _contactFilter = f; renderContacts(); }

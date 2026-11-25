@@ -366,6 +366,8 @@ main.content { min-width: 0; padding: var(--sp-6) var(--sp-6) 96px; }
 .c-good { background: var(--good); } .c-wait { background: var(--wait); }
 .c-bad { background: var(--bad); } .c-active { background: var(--active); }
 .c-note { background: var(--note); } .c-idle { background: var(--line-strong); }
+/* Hatched: contacts not yet usable (no confirmed email), apart from solid Closed out. */
+.c-faint { background: repeating-linear-gradient(135deg, var(--line-strong) 0 2px, transparent 2px 4px); }
 
 .legend-rows { display: flex; flex-direction: column; margin-top: var(--sp-3); }
 .legend-row { display: grid; grid-template-columns: minmax(0, 1fr) auto 3.5ch; gap: var(--sp-3); align-items: center; padding: 7px 0; }
