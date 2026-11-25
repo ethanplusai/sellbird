@@ -2966,8 +2966,13 @@ function fillMergeVars(text, r) {
 
 let _gmailBusy = false;  // one compose window per click, never two
 
-async function openInGmail(ci, si, ri) {
+// app: 'gmail' (default) or 'zoho'. Zoho has no documented prefilled-compose
+// URL, so it uses a mailto: link (Zoho Mail can be the browser's mail handler)
+// and copies subject + body to the clipboard in case only the address fills.
+async function openInGmail(ci, si, ri, app) {
   if (_gmailBusy) return;
+  const zoho = app === 'zoho';
+  const name = zoho ? 'Zoho Mail' : 'Gmail';
   const c = _campaigns[ci];
   const step = c && (c.sequence || [])[si];
   const r = c && (c.recipients || [])[ri];
@@ -2975,13 +2980,21 @@ async function openInGmail(ci, si, ri) {
   // Cold email carries the postal address and opt-out line, sent by hand too.
   const filled = fillMergeVars(step.body, r).trimEnd();
   const body = filled + (c.footer && !filled.endsWith(c.footer) ? '\n\n' + c.footer : '');
+  const subject = fillMergeVars(step.subject, r);
   // authuser picks the Google account Sellbird sends as, not just whichever
   // one the browser happens to be signed into.
-  const url = 'https://mail.google.com/mail/?view=cm&fs=1' +
-    (c.send_as ? '&authuser=' + encodeURIComponent(c.send_as) : '') +
-    '&to=' + encodeURIComponent(r.email) +
-    '&su=' + encodeURIComponent(fillMergeVars(step.subject, r)) +
-    '&body=' + encodeURIComponent(body);
+  const url = zoho
+    ? 'mailto:' + encodeURIComponent(r.email).replace('%40', '@') +
+      '?subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(body)
+    : 'https://mail.google.com/mail/?view=cm&fs=1' +
+      (c.send_as ? '&authuser=' + encodeURIComponent(c.send_as) : '') +
+      '&to=' + encodeURIComponent(r.email) +
+      '&su=' + encodeURIComponent(subject) +
+      '&body=' + encodeURIComponent(body);
+  // Inside the click, so the browser allows it.
+  if (zoho && navigator.clipboard) {
+    navigator.clipboard.writeText('Subject: ' + subject + '\n\n' + body).catch(() => {});
+  }
   const left = /\{\{\s*\w+\s*\}\}/.test(fillMergeVars(step.subject, r) + fillMergeVars(step.body, r));
   // No 'noopener' feature string: with it window.open always returns null,
   // so a blocked pop-up could not be told apart from a successful one. The
@@ -2989,7 +3002,7 @@ async function openInGmail(ci, si, ri) {
   // only gets the draft once the send is recorded.
   const w = window.open('', '_blank');
   if (!w) {
-    showToast('Your browser blocked the Gmail tab. Allow pop-ups for this page and click again.', 'error');
+    showToast('Your browser blocked the ' + name + ' tab. Allow pop-ups for this page and click again.', 'error');
     return;
   }
   w.opener = null;
@@ -3000,7 +3013,8 @@ async function openInGmail(ci, si, ri) {
   try { if (!claimed) claimed = await markSent(ci, ri, true); } finally { _gmailBusy = false; }
   if (!claimed) { w.close(); return; }
   w.location.href = url;
-  if (left) showToast('This draft still has a {{placeholder}} in it. Fix it in Gmail before sending.', 'error');
+  if (left) showToast('This draft still has a {{placeholder}} in it. Fix it in ' + name + ' before sending.', 'error');
+  else if (zoho) showToast('Opened in Zoho Mail. The email is also copied: if the body is empty, press Ctrl+V.', 'success');
 }
 
 async function markSent(ci, ri, sent) {
@@ -3076,6 +3090,8 @@ async function loadCampaigns() {
           return '<span class="rcpt-who">' + escHtml(r.email) + '</span>' +
             '<button class="btn btn-secondary btn-sm" onclick="openInGmail(' + i + ',' + s + ',' + ri + ')">' +
             'Open in Gmail</button>' +
+            '<button class="btn btn-secondary btn-sm" onclick="openInGmail(' + i + ',' + s + ',' + ri + ',\'zoho\')">' +
+            'Open in Zoho Mail</button>' +
             '<span class="muted" style="font-size:12px">Sellbird won\'t send follow-ups to people you emailed yourself.</span>';
         }
         if (s !== 0) return '';
@@ -3092,6 +3108,8 @@ async function loadCampaigns() {
         return '<span class="rcpt-who">' + escHtml(r.email) + risky + '</span>' +
           '<button class="btn btn-secondary btn-sm" onclick="openInGmail(' + i + ',' + s + ',' + ri + ')">' +
           'Open in Gmail</button>' +
+          '<button class="btn btn-secondary btn-sm" onclick="openInGmail(' + i + ',' + s + ',' + ri + ',\'zoho\')">' +
+          'Open in Zoho Mail</button>' +
           '<label><input type="checkbox" onchange="markSent(' + i + ',' + ri + ',this.checked)"> Mark as sent</label>'
       }).filter(Boolean).map(x => '<div class="rcpt">' + x + '</div>').join('');
       stepsHtml += '<div class="email-step"><span class="step-dot">' + escHtml(String(step.step || '?')) + '</span>' +

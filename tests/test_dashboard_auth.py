@@ -299,6 +299,18 @@ def test_same_origin_browser_requests_work(authed, env):
     assert "SMTP_HOST=smtp.example.test" in dash.ENV_FILE.read_text()
 
 
+def test_configured_public_origin_is_accepted_only_when_set(authed, monkeypatch):
+    public = {"Origin": "https://sellbird.example.com", "Sec-Fetch-Site": "same-origin"}
+    assert authed.post("/api/sending/pause", headers=public).status_code == 403
+    monkeypatch.setenv("SELLBIRD_PUBLIC_ORIGIN", "https://sellbird.example.com/")
+    assert authed.post("/api/sending/pause", headers=public).status_code == 200
+    other = {"Origin": "https://evil.example", "Sec-Fetch-Site": "same-origin"}
+    assert authed.post("/api/sending/pause", headers=other).status_code == 403
+    monkeypatch.setenv("SELLBIRD_PUBLIC_ORIGIN", "http://sellbird.example.com")  # https only
+    plain = {"Origin": "http://sellbird.example.com", "Sec-Fetch-Site": "same-origin"}
+    assert authed.post("/api/sending/pause", headers=plain).status_code == 403
+
+
 def test_top_level_navigation_to_the_shell_is_allowed_from_anywhere(anon):
     nav = {"Sec-Fetch-Site": "cross-site", "Sec-Fetch-Mode": "navigate",
            "Sec-Fetch-Dest": "document"}
@@ -838,7 +850,7 @@ def test_fragment_token_moves_to_session_storage_and_leaves_the_url():
     assert out["call"]["auth"] == f"Bearer {token}"
     assert out["call"]["url"] == "http://127.0.0.1:5555/api/companies"
     assert out["call"]["ctype"] == "application/json"
-    assert out["call"]["mode"] == "same-origin" and out["call"]["credentials"] == "omit"
+    assert out["call"]["mode"] == "same-origin" and out["call"]["credentials"] == "same-origin"
     assert out["call"]["redirect"] == "error" and out["call"]["referrerPolicy"] == "same-origin"
 
 

@@ -1116,6 +1116,25 @@ class OpenStreetMap(DiscoveryProvider):
         "panader": ['shop=bakery'],
         "clinica": ['amenity=clinic'],
         "clínica": ['amenity=clinic'],
+        # Local modification (self-hosted fork): more sectors for free discovery.
+        "manufactur": ['man_made=works'],
+        "metal fabric": ['craft=metal_construction', 'man_made=works'],
+        "hospital": ['amenity=hospital'],
+        "clinic": ['amenity=clinic', 'healthcare=clinic'],
+        "laborator": ['healthcare=laboratory'],
+        "hotel": ['tourism=hotel'],
+        "restaurant": ['amenity=restaurant'],
+        "cafe": ['amenity=cafe'],
+        "catering": ['craft=caterer'],
+        "wholesal": ['shop=wholesale'],
+        "supermarket": ['shop=supermarket'],
+        "logistic": ['office=logistics'],
+        "construction": ['office=construction_company', 'craft=builder'],
+        "engineering consult": ['office=engineer'],
+        "accounting": ['office=accountant'],
+        "real estate": ['office=estate_agent'],
+        "school": ['amenity=school', 'amenity=college'],
+        "energy": ['office=energy_supplier'],
     }
 
     def _tags(self, term: str) -> list[str]:
