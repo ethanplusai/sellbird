@@ -24,6 +24,7 @@ import logging
 import os
 import random
 import re
+import unicodedata
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional
@@ -99,7 +100,10 @@ def _clean_domain(domain: str) -> str:
 
 
 def _clean_name_part(value: str) -> str:
-    return re.sub(r"[^a-z]", "", (value or "").lower())
+    """Letters only, accents folded: "María" -> "maria", "Núñez" -> "nunez"
+    (addresses are ASCII; dropping the letter would give "mara")."""
+    folded = unicodedata.normalize("NFKD", value or "").encode("ascii", "ignore").decode()
+    return re.sub(r"[^a-z]", "", folded.lower())
 
 
 def build_email(pattern: str, first: str, last: str, domain: str) -> str:
@@ -773,6 +777,7 @@ async def find_email(
     known_emails: Optional[list[tuple[str, str, str]]] = None,
     default_pattern: str = DEFAULT_PATTERN,
     other_people: Optional[list[tuple[str, str]]] = None,
+    alt_last_names: Optional[list[str]] = None,
 ) -> EmailResult:
     """Find and honestly grade one email for a person at a company.
 
@@ -786,6 +791,11 @@ async def find_email(
     one of them could own (jsmith@ for Jane when John Smith works there too,
     or an address published as theirs) is never guessed or verified for
     this person: a verifier would confirm the other person's mailbox.
+
+    ``alt_last_names`` is the person's other possible surname (a Spanish
+    name's maternal one, or the paternal one when the name is ambiguous).
+    Only when a verifier says the first candidate does not exist is the
+    same pattern tried once with it, so it costs at most one more check.
     """
     domain = _clean_domain(domain)
     if not (first_name and last_name and domain):
@@ -804,11 +814,13 @@ async def find_email(
     )
     candidate = build_email(pattern, first_name, last_name, domain)
     own = _clean_name_part(first_name), _clean_name_part(last_name)
+    published = False
     for email, first, last in known_emails or []:
         if (_clean_name_part(first), _clean_name_part(last)) == own \
                 and email.split("@")[-1].lower() == domain:
             candidate = email.strip().lower()
             pattern = infer_pattern_from_email(candidate, first, last) or pattern
+            published = True
             break
     if _belongs_to_someone_else(candidate, pattern, (first_name, last_name), domain,
                                 other_people, known_emails):
@@ -838,6 +850,18 @@ async def find_email(
             await state.save_email_pattern(domain, mx_type=mx_type, is_catch_all=1)
         except Exception:
             pass
+
+    if status == "invalid" and alt_last_names and not published and "{l}" in pattern:
+        for alt in alt_last_names[:1]:
+            alt_candidate = build_email(pattern, first_name, alt, domain)
+            if not alt_candidate or alt_candidate == candidate or _belongs_to_someone_else(
+                    alt_candidate, pattern, (first_name, alt), domain, other_people, known_emails):
+                continue
+            alt_status, _ = await _verify_candidate(alt_candidate, mx_type, env)
+            if alt_status and alt_status != "invalid":
+                logger.info(f"Email for {first_name} {last_name}@{domain}: {candidate} doesn't exist; "
+                            f"using the other surname")
+                candidate, status = alt_candidate, alt_status
 
     if status is None:
         # Verification couldn't decide — an honest guess, never "verified".

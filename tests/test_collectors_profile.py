@@ -148,6 +148,21 @@ def test_tech_and_ads_detection():
     assert c._any(html, __import__("sellbird.collectors.profile", fromlist=["META_PIXEL"]).META_PIXEL)
 
 
+def test_online_store_platforms_are_detected():
+    from sellbird.integrations.tech_detect import detect_tech
+    woo = """<link href="/wp-content/themes/x.css">
+             <script src="/wp-content/plugins/woocommerce/assets/js/frontend/cart.js"></script>"""
+    vtex = '<img src="https://shop.vteximg.com.br/arquivos/logo.png">'
+    for found in (collector().detect_tech(woo), detect_tech(woo)):
+        assert {"WordPress", "WooCommerce"} <= set(found)
+    assert "VTEX" in collector().detect_tech(vtex) and "VTEX" in detect_tech(vtex)
+
+
+def test_a_blog_mentioning_woocommerce_is_not_a_store():
+    html = "<p>We compared WooCommerce and Shopify for small shops.</p>"
+    assert "WooCommerce" not in collector().detect_tech(html)
+
+
 def test_clean_page_has_no_false_tech():
     assert collector().detect_tech("<html><body><h1>Acme</h1></body></html>") == []
 

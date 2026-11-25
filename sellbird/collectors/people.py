@@ -63,12 +63,20 @@ general generale gerant gerante associe associee associes technicien technicienn
 techniciens adjoint adjointe responsable gestionnaire conseiller conseillere
 annee annees experience clients clientele famille familiale familial depuis
 secteur secteurs francais anglais pourquoi choisir avis prix service services
+el los las nuestro nuestra nuestros nuestras equipo conoce conozca conocenos quienes somos
+sobre nosotros bienvenido bienvenidos bienvenida inicio contacto contactenos servicios
+servicio historia fundador fundadora fundadores dueno duena duenos propietario propietaria
+gerente director directora presidenta socio socia socios doctora dra lic licenciado
+licenciada ing ingeniero ingeniera arq abogado abogada abogados familia empresa clinica
+consultorio odontologia
 """.split())
 
 # Particles that sit lower-case inside a surname ("Van de Wal", "de la Cruz").
 _PARTICLES = frozenset("van von de der den del della di da la le du dos das st".split())
 # Dre: a woman doctor in Québec; Me: a lawyer or notary; M., Mme: Mr, Mrs.
-_HONORIFIC = re.compile(r"^(?:(?:dre?|mr|mrs|ms|miss|prof|rev|hon|mme|mlle|me)\.?|m\.)\s+", re.I)
+# Spanish: Dra., Lic., Licda., Ing., Arq., Sr., Sra., Srta.
+_HONORIFIC = re.compile(r"^(?:(?:dre?|dra|mr|mrs|ms|miss|prof|rev|hon|mme|mlle|me|lic|licda|ing|arq|sra?|srta)\.?"
+                        r"|m\.)\s+", re.I)
 # Credentials and suffixes that follow a name: "John Smith, DDS", "Calvin Marsh, Esq."
 _CREDENTIAL = (r"(?:dds|dmd|md|do|dvm|od|phd|jd|esq|cpa|pe|ra|rn|np|pa|mba|ms|ma|"
                r"facs|fagd|ccc-slp|jr|sr|ii|iii|iv)")
@@ -114,7 +122,11 @@ def split_person_name(text: str) -> tuple[str, str] | None:
         start -= 1
     surname = rest[start:]
     middles = rest[:start]
-    for t in middles:
+    for i, t in enumerate(middles):
+        # "Ana de la Cruz Pérez": particles inside the name, before a
+        # capitalised word.
+        if t in _PARTICLES and i + 1 < len(middles):
+            continue
         if not (_NAME_TOKEN.match(t) and (len(t.strip(".")) == 1 or _word_ok(t))):
             return None
     last_word = surname[-1]
@@ -133,6 +145,61 @@ def is_person_name(text: str) -> bool:
     return split_person_name(text) is not None
 
 
+
+# Second given names common enough in Spanish that "María José García" is
+# María José + García, not María + García José. Accent-folded.
+_GIVEN_ES = frozenset("""
+jose maria carlos luis pablo antonio manuel fernando fernanda elena isabel teresa carmen
+eugenia alejandra alejandro andres angel miguel francisco javier ignacio alberto eduardo
+daniel david jesus lucia paula laura sofia victoria cristina patricia mercedes pilar rosa
+ines gabriela camila valentina felipe esteban sebastian enrique ramon rafael diego jorge
+ana juan pedro martin alfonso emilio guadalupe concepcion dolores beatriz susana monica
+rosario mar rocio socorro consuelo sol
+""".split())
+# ...that are also common surnames, so either reading stays possible.
+_GIVEN_AND_SURNAME_ES = frozenset("martin ramon manuel jesus pilar rosa".split())
+
+
+def hispanic_surnames(full_name: str) -> list[str]:
+    """The surnames of a Spanish-style full name, likeliest first.
+
+    Spanish names carry two surnames, paternal then maternal, and work
+    addresses use the paternal one: "María José García López" -> ["García",
+    "López"], "José García López" -> ["García", "López"], "Ana de la Cruz
+    Pérez" -> ["de la Cruz", "Pérez"]. Three words are ambiguous: "María
+    José García" is a compound given name -> ["García"], and "María del
+    Carmen Ruiz" keeps "del Carmen" in the given name. Returns [] for a
+    single surname word ("Rosa Quintero") or a name that isn't one.
+    """
+    text = html_lib.unescape(full_name or "").replace("\xa0", " ")
+    text = re.sub(r"\s+", " ", text).strip(" ,.-|–—")
+    text = _HONORIFIC.sub("", text)
+    text = nfc(_CREDENTIAL_TAIL.sub("", text).strip(" ,"))
+    if not split_person_name(text):
+        return []
+    units, pending = [], []
+    for token in text.split()[1:]:
+        if re.fullmatch(r"[A-Z]\.?", token):        # a middle initial
+            continue
+        if token.lower() in _PARTICLES:
+            pending.append(token)
+            continue
+        units.append(" ".join(pending + [token]))
+        pending = []
+    while len(units) > 1 and " " in units[0] \
+            and fold_accents(units[0].split()[-1]).lower() in _GIVEN_ES:
+        units.pop(0)
+    if pending or len(units) < 2:
+        return []
+    if len(units) >= 3:
+        return [units[-2], units[-1]]
+    middle, last = units
+    low = fold_accents(middle).lower()
+    if low in _GIVEN_ES:
+        return [last, middle] if low in _GIVEN_AND_SURNAME_ES else [last]
+    return [middle, last]
+
+
 # ── titles ───────────────────────────────────────────────────────────────
 
 # Titles that mean "the person who decides" at a small business. Any one of
@@ -145,7 +212,11 @@ _OWNER_FAMILY = ("owner", "co-owner", "founder", "co-founder", "cofounder", "pre
                  "proprietor", "managing partner", "founding partner", "managing member",
                  "owner/operator", "owner-operator",
                  "proprietaire", "coproprietaire", "co-proprietaire", "pdg", "p.-d.g.", "p.d.g.", "president-directeur general", "fondateur",
-                 "cofondateur", "co-fondateur", "directeur general", "associe")
+                 "cofondateur", "co-fondateur", "directeur general", "associe",
+                 # Spanish, accent-folded
+                 "dueno", "propietario", "copropietario", "fundador", "cofundador",
+                 "co-fundador", "presidente", "director general", "director ejecutivo",
+                 "socio fundador", "socio director", "socio gerente")
 # Titles are compared accent-folded, lower-case and in the masculine form, so
 # "Présidente" satisfies "Président" and "directrice générale" satisfies
 # "Directeur général".
@@ -160,6 +231,13 @@ _FEMININE = {
     "administratrice": "administrateur", "superviseure": "superviseur", "chargee": "charge",
     "principale": "principal", "controleuse": "controleur", "mecanicienne": "mecanicien",
     "installatrice": "installateur", "repartitrice": "repartiteur", "proprietaires": "proprietaire",
+    # Spanish
+    "duena": "dueno", "propietaria": "propietario", "copropietaria": "copropietario",
+    "fundadora": "fundador", "cofundadora": "cofundador", "presidenta": "president",
+    "directora": "director", "socia": "socio", "ejecutiva": "ejecutivo",
+    "administradora": "administrador", "abogada": "abogado", "odontologa": "odontologo",
+    "contadora": "contador", "encargada": "encargado", "jefa": "jefe",
+    "vicepresidenta": "vicepresidente",
 }
 
 
@@ -184,13 +262,20 @@ _OWNER_TITLE = re.compile(
     # French: propriétaire, président(e), PDG / P.-D.G., fondateur/fondatrice,
     # directeur/directrice général(e) (the one who runs the business in Québec)
     r"co-?proprietaire|proprietaire|presidente?|pdg|p\.-?d\.g|co-?fondat(?:eur|rice)|"
-    r"fondat(?:eur|rice)|direct(?:eur|rice) generale?)\b", re.I)
+    r"fondat(?:eur|rice)|direct(?:eur|rice) generale?|"
+    # Spanish: dueño/a, propietario/a, fundador/a, presidente/a, director(a)
+    # general o ejecutivo/a, socio/a fundador/a. "Gerente general" is a
+    # general manager, as in English.
+    r"duen[oa]s?|co-?propietari[oa]s?|propietari[oa]s?|co-?fundador(?:a|es|as)?|fundador(?:a|es|as)?|"
+    r"presidenta|directora? (?:general|ejecutiv[oa])|soci[oa] (?:fundador|director|gerente)a?)\b", re.I)
 # Words that make an owner title about someone else ("Assistant to the CEO",
 # "Adjointe à la présidente") or a rank below it ("Vice President", "VP",
 # "Directeur général adjoint", "Sous-directeur").
 _SUBORDINATE = re.compile(r"\b(?:vice[- ]presidente?|vp|svp|evp|assistant(?: to)?|"
                           r"executive assistant|to the|deputy|associate|aide|"
-                          r"assistante?s?|adjointe?s?|sous-\w+)\b", re.I)
+                          r"assistante?s?|adjointe?s?|sous-\w+|"
+                          r"vicepresident[ea]s?|asistentes?|secretari[oa]s?|adjunt[oa]s?|"
+                          r"sub(?:director|gerente)a?s?|suplentes?)\b", re.I)
 _PROFESSIONAL = re.compile(
     r"\b(?:dds|dmd|md|dvm|od|esq|cpa|attorney|lawyer|dentist|orthodontist|"
     r"periodontist|endodontist|doctor|dr|physician|veterinarian|optometrist|"
@@ -200,7 +285,9 @@ _PROFESSIONAL = re.compile(
 _PARTNER_ONLY = re.compile(
     r"^(?:senior |founding |managing |name |equity )?partner\b|"
     r"^associee?s?(?:\s+(?:principale?|direct(?:eur|rice)|fondat(?:eur|rice)|majoritaire|gerante?))?"
-    r"(?!\s*(?:aux?|a la|en|-))\b", re.I)
+    r"(?!\s*(?:aux?|a la|en|-))\b|"
+    # Spanish "Socio(a)": a partner; "Socio fundador", "Socia directora".
+    r"^soci[oa]s?(?:\s+(?:fundador|director|gerente|principal)a?)?\b", re.I)
 
 
 # Someone who used to own or run it: "Former Owner", "Past President",
@@ -208,7 +295,9 @@ _PARTNER_ONLY = re.compile(
 # "Ancien président", "Fondateur retraité".
 _FORMER = re.compile(
     r"(?i)\b(?:former|formerly|past|retired|late|emerit(?:us|a)|deceased|in memory|memoriam|"
-    r"ex-|one-time|onetime|ancien(?:ne)?s?|retraitee?s?|defunte?|emerite|en memoire)\b|"
+    r"ex-|one-time|onetime|ancien(?:ne)?s?|retraitee?s?|defunte?|emerite|en memoire|"
+    r"fallecid[oa]s?|jubilad[oa]s?|en memoria|en recuerdo|q\.?\s?e\.?\s?p\.?\s?d|antigu[oa]s?|"
+    r"ex(?:duen|propietari|president|fundador)\w*)\b|"
     r"\b(?:1[89]|20)\d{2}\s*[-–—]\s*(?:1[89]|20)\d{2}\b")
 
 
@@ -225,7 +314,7 @@ def _clean_for_target(title: str, target: str) -> str:
     "Directeur général adjoint" for "Directeur général"."""
     low = f" {_norm_title(title)} "
     if "vice" not in target and "vp" not in target.split():
-        low = re.sub(r"\bvice[- ]president\b|\b[se]?vp\b", " ", low)
+        low = re.sub(r"\bvice[- ]?president\w*|\b[se]?vp\b", " ", low)
     if "assistant" not in target:
         low = re.sub(r"\b(?:executive )?assistant\b.*", " ", low)
     # French puts the rank after the noun, so the whole title is someone
@@ -265,7 +354,8 @@ def owner_rank(title: str, owner: bool = False) -> int:
     """How surely this title is the decision maker (higher first)."""
     low = fold_accents(title or "").lower()
     if is_owner_title(title):
-        if re.search(r"\b(?:co-?owner|owner|proprietor|co-?proprietaire|proprietaire)\b", low):
+        if re.search(r"\b(?:co-?owner|owner|proprietor|co-?proprietaire|proprietaire|"
+                     r"duen[oa]s?|co-?propietari[oa]s?|propietari[oa]s?)\b", low):
             return 100
         if re.search(r"\bdirect(?:eur|rice) generale?\b", low) and not re.search(
                 r"\b(?:presidente?|pdg|p\.-?d\.g|fondat(?:eur|rice)|co-?fondat(?:eur|rice))\b", low):
@@ -274,12 +364,13 @@ def owner_rank(title: str, owner: bool = False) -> int:
         return 95
     if owner:
         return 90
-    if re.search(r"\bpartner\b|\bassociee?s?\b(?!\s*(?:aux?|a la|en)\b)", low):
+    if re.search(r"\bpartner\b|\bassociee?s?\b(?!\s*(?:aux?|a la|en)\b)|\bsoci[oa]s?\b", low):
         return 80
-    if re.search(r"\b(?:general manager|managing director)\b", low):
+    if re.search(r"\b(?:general manager|managing director|gerente general)\b", low):
         return 60
     if re.search(r"\b(?:director|manager|head of|chief|directeur|directrice|gerante?|gestionnaire|"
-                 r"responsable)\b", low) and not _SUBORDINATE.search(low):
+                 r"responsable|directora|gerente|jef[ea]|encargad[oa]|administrador[a]?)\b", low) \
+            and not _SUBORDINATE.search(low):
         return 40
     return 10
 
@@ -342,10 +433,25 @@ def surname_on_the_door(last_name: str, domain: str, site_name: str = "") -> boo
 # French: "Fondatrice chez Quillnest", "Président de l'Association des ...".
 _FR_ROLE = (r"co-?proprietaire|proprietaire|presidente?|pdg|co-?fondat(?:eur|rice)|fondat(?:eur|rice)|"
             r"directeur|directrice|associee?")
+_ES_ROLE = r"duen[oa]|propietari[oa]|co-?fundador[a]?|fundador[a]?|president[ea]|soci[oa]"
 _TITLE_ORG = re.compile(
-    rf"(?i:\b(?:owner|founder|co-?founder|ceo|cto|coo|cmo|president|principal|partner|director|{_FR_ROLE})"
-    r"\b(?:\s*(?:,|&|and|et)\s*\w+)*?\s*(?:,|\bat\b|\bof\b|\bchez\b|\bde\b|\bdu\b|@|\s))\s*"
-    r"((?:the\s+|la\s+|le\s+|l['’])?[A-Z][\w&.'’-]*(?:\s+(?:[A-Z][\w&.'’-]*|&|and|of|de|des|du))*)")
+    rf"(?i:\b(?:owner|founder|co-?founder|ceo|cto|coo|cmo|president|principal|partner|director|{_FR_ROLE}|"
+    rf"{_ES_ROLE})"
+    r"\b(?:\s*(?:,|&|and|et|y)\s*\w+)*?\s*(?:,|\bat\b|\bof\b|\bchez\b|\bde\b|\bdu\b|\bdel\b|@|\s))\s*"
+    r"((?:the\s+|la\s+|le\s+|el\s+|l['’])?[A-Z][\w&.'’-]*(?:\s+(?:[A-Z][\w&.'’-]*|&|and|of|de|des|du|y))*)")
+# What follows an owner title that is still a role, not a company:
+# "Dueña y Gerente General", "Owner and General Manager", "Owner, Lead
+# Technician". Every word must be role vocabulary, so "Founder at Acme
+# Marketing" still names another company. Accent-folded.
+_ROLE_WORDS = re.compile(
+    r"(?i)(?:(?:and|&|of|the|y|e|de|del|la|el|general|manager|operations|operator|lead|senior|"
+    r"head|technician|sales|marketing|service|office|project|estimator|director|officer|"
+    r"executive|chief|master|licensed|certified|plumber|electrician|roofer|installer|"
+    r"inspector|designer|broker|agent|realtor|attorney|dentist|doctor|ceo|cfo|coo|cto|cmo|"
+    r"president|owner|founder|co-?founder|partner|principal|gerente|directora?|ejecutiv[oa]|"
+    r"administrador[a]?|encargad[oa]|jef[ea]|comercial|ventas|operaciones|finanzas|tecnic[oa]|"
+    r"odontolog[oa]|abogad[oa]|doctora|medic[oa]|contador[a]?|duen[oa]|propietari[oa]|"
+    r"fundador[a]?|cofundador[a]?|president[ea]|soci[oa])\s*)+")
 # Capitalised French titles aren't an organisation: "Président Directeur Général".
 _FR_TITLE_WORDS = (r"(?:(?:et|and)\s+)?(?:%s|generale?|executi(?:f|ve)|principale?)"
                    r"(?:[\s-]+(?:%s|generale?|executi(?:f|ve)|principale?|et))*" % (_FR_ROLE, _FR_ROLE))
@@ -356,7 +462,7 @@ def title_names_other_org(title: str, domain: str, site_name: str = "") -> bool:
         org = m.group(1).strip()
         if re.fullmatch(r"(?i)(?:and\s+)?(?:owner|founder|co-?founder|ceo|cto|coo|cmo|president|"
                         r"principal|partner|director|chief[\w\s]*|operations|executive officer)", org) \
-                or re.fullmatch(rf"(?i){_FR_TITLE_WORDS}", org):
+                or re.fullmatch(rf"(?i){_FR_TITLE_WORDS}", org) or _ROLE_WORDS.fullmatch(org):
             continue
         if not names_business(org, domain, site_name):
             return True
@@ -441,7 +547,7 @@ def _sentences(html: str) -> list[str]:
         block = re.sub(r"\s+", " ", block).strip()
         # "Dr. Maren", "Elliot T. Marwood": an abbreviation's full stop
         # is not the end of a sentence.
-        block = re.sub(r"\b(Dre?|Mr|Mrs|Ms|Mme|Mlle|Prof|St|Ste|Jr|Sr|Inc|Co|Ltd|Lt[ée]e|[A-Z])\. ",
+        block = re.sub(r"\b(Dre?|Dra|Mr|Mrs|Ms|Mme|Mlle|Prof|St|Ste|Jr|Sra|Srta|Sr|Lic|Licda|Ing|Arq|Inc|Co|Ltd|Lt[ée]e|[A-Z])\. ",
                        "\\1.\xa0", block)
         if block:
             out.extend(s.strip() for s in re.split(r"(?<=[.!?]) +(?=[A-ZÀ-ÖØ-Þ])", block) if s.strip())
@@ -462,7 +568,9 @@ _STRONG_ROLE = re.compile(
     r"orthodontist|officer|head of|vp|vice president|superintendent|estimator|administrator|"
     r"co-?proprietaire|proprietaire|presidente?|pdg|co-?fondat(?:eur|rice)|fondat(?:eur|rice)|"
     r"directeur|directrice|gerante?|associee?|vice-presidente?|estimat(?:eur|rice)|contremaitre|"
-    r"superviseure?|comptable|ingenieure?)\b", re.I)
+    r"superviseure?|comptable|ingenieure?|"
+    r"duen[oa]|propietari[oa]|co-?fundador[a]?|fundador[a]?|president[ea]|gerente|directora?|"
+    r"soci[oa]|administrador[a]?|odontolog[oa]|abogad[oa]|contador[a]?)\b", re.I)
 
 
 def _person(first, last, title, *, source, evidence, url="", owner=False, full_name=""):
@@ -660,24 +768,61 @@ _PROSE_FR = (
                 rf"(?P<org>(?i:(?:l['’]|la\s+|son\s+|sa\s+){_FR_ORG_NOUN})|[A-Z][\w&'’.-]*(?:\s+(?:[A-Z][\w&'’.-]*|&))*)"),
      "Founder"),
 )
+# Spanish. Dr., Dra., Lic., Licda., Ing., Arq., Sr., Sra., Srta. before a name.
+_ES_HON = r"(?:(?:Dra?|Lic|Licda|Ing|Arq|Sra?|Srta)\.?\s+)?"
+_ES_ONE = (r"(?:co-?propietari[oa]s?|propietari[oa]s?|duen[oa]s?|co-?fundador(?:a|es)?|fundador(?:a|es)?|"
+           r"president[ea]|directora?\s+general|soci[oa]\s+fundador[a]?)")
+# "dueña y fundadora", "fundador y director general"
+_ES_OWNER_WORD = rf"(?P<title>(?i:{_ES_ONE}(?:\s+(?:y|e)\s+{_ES_ONE})?))"
+_ES_ORG_NOUN = (r"(?:empresa|negocio|firma|clinica|consultorio|despacho|estudio|tienda|taller|"
+                r"panaderia|restaurante|agencia|peluqueria|barberia|salon)")
+_PROSE_ES = (
+    # "fundada en 1998 por Rosa Quintero", "creada por la Dra. Inés Prado"
+    (re.compile(rf"(?i:\b(?:fundad[oa]s?|cread[oa]s?|establecid[oa]s?|iniciad[oa]s?)\s+"
+                rf"(?:en\s+(?:el\s+(?:ano\s+)?)?\d{{4}}\s+)?por\s+(?:(?:el|la)\s+)?"
+                rf"(?:(?:abogad[oa]|odontolog[oa]|doctora?|su\s+(?:duen[oa]|fundador[a]?|propietari[oa]))\s*,?\s+)?)"
+                rf"{_ES_HON}{_NAME_RE}"), "Fundador"),
+    # "es propiedad de Tomás Quintero"
+    (re.compile(rf"(?i:\bpropiedad\s+de\s+(?:(?:el|la)\s+)?)(?!(?i:su|sus|nuestr[oa]s?)\b){_ES_HON}{_NAME_RE}"),
+     "Dueño"),
+    # "nuestra fundadora, Lucía Ferrán", "dirigida por su dueño Julián Prado"
+    (re.compile(rf"(?i:\b(?:nuestr[oa]s?|sus?|(?:por|con)\s+(?:el|la|su|nuestr[oa]))\s+"
+                rf"(?:actual\s+|orgullos[oa]\s+)?){_ES_OWNER_WORD},?\s+{_ES_HON}{_NAME_RE}"), None),
+    # "Lucía Ferrán, fundadora", "Julián Prado, dueño de Panadería Sol"
+    (re.compile(rf"{_ES_HON}{_NAME_RE}\s*,\s*(?i:(?:nuestr[oa]|su|actual|el|la)\s+)?{_ES_OWNER_WORD}\b"
+                rf"(?P<tail>.{{0,40}})"), None),
+    # "Julián Prado es el dueño de la panadería"
+    (re.compile(rf"{_ES_HON}{_NAME_RE}\s+(?i:es\s+(?:el|la|nuestr[oa]|su)\s+(?:actual\s+)?){_ES_OWNER_WORD}\b"
+                rf"(?P<tail>.{{0,40}})"), None),
+    # "Rosa Quintero fundó Panadería Sol", "Iván Prado abrió la clínica"
+    (re.compile(rf"{_ES_HON}{_NAME_RE}\s+(?i:co-?fundo|fundo|abrio)\s+"
+                rf"(?P<org>(?i:(?:la|el)\s+{_ES_ORG_NOUN})|[A-Z][\w&'’.-]*(?:\s+(?:[A-Z][\w&'’.-]*|&))*)"),
+     "Fundador"),
+    # "el consultorio de la Dra. Inés Varela", "el despacho del Lic. Tomás Rey"
+    (re.compile(rf"(?i:\b(?:consultorio|clinica|despacho|oficina|estudio)\s+(?:de\s+la|del))\s+"
+                rf"(?=(?:Dra?|Lic|Licda|Ing|Arq)\.?\s){_ES_HON}{_NAME_RE}"), "Dueño"),
+)
 _FIRST_PERSON = re.compile(
     r"(?i)\bI\s+(?:founded|started|opened|own|established|launched)\b"
     r"|\bj['’]ai\s+(?:co-?)?(?:fonde|demarre|ouvert|lance|cree|mis\s+sur\s+pied)\b"
-    r"|\bje\s+suis\s+(?:le\s+|la\s+|l['’])?(?:co-?)?(?:proprietaire|fondat(?:eur|rice)|presidente?)\b")
+    r"|\bje\s+suis\s+(?:le\s+|la\s+|l['’])?(?:co-?)?(?:proprietaire|fondat(?:eur|rice)|presidente?)\b"
+    r"|\byo\s+(?:co-?)?funde\b|\bsoy\s+(?:el|la)\s+(?:co-?)?(?:duen[oa]|fundador[a]?|propietari[oa])\b")
 # "Renata founded Ashby & Kerr", "Joelle started the Penrose & Vance Law Firm":
 # a first name only, resolved against the full names the site lists.
 _FIRST_NAME_FOUNDER = re.compile(
     rf"\b(?P<first>{_CAP})\s+(?i:co-?founded|founded|started|launched|established|opened|"
-    rf"(?:a\s+)?(?:co-?fonde|fonde|demarre|lance|mis\s+sur\s+pied))\s+"
-    rf"(?P<org>(?:the\s+|la\s+|le\s+|l['’])?[A-Z][\w&'’.-]*(?:\s+(?:[A-Z][\w&'’.-]*|&))*)")
+    rf"(?:a\s+)?(?:co-?fonde|fonde|demarre|lance|mis\s+sur\s+pied)|co-?fundo|fundo)\s+"
+    rf"(?P<org>(?:the\s+|la\s+|le\s+|el\s+|l['’])?[A-Z][\w&'’.-]*(?:\s+(?:[A-Z][\w&'’.-]*|&))*)")
 
 
 _ROLE_ONLY = re.compile(r"(?i)(?:(?:and|et)\s+)?(?:ceo|cfo|coo|cto|cmo|president|owner|founder|co-?founder|"
                        r"principal|partner|chief\s+\w+(?:\s+officer)?|general manager|"
-                       rf"{_FR_ROLE}|direct(?:eur|rice)\s+generale?)")
+                       rf"{_FR_ROLE}|direct(?:eur|rice)\s+generale?)"
+                       r"|" + _ROLE_WORDS.pattern.removeprefix("(?i)"))
 # A person the site remembers rather than employs.
 _DEPARTED = (r"(?:passed away|died|retired|was laid to rest|is missed|rest in peace|"
-             r"decedee?|nous a quittee?s?|s['’]est eteinte?|a pris sa retraite|repose en paix)")
+             r"decedee?|nous a quittee?s?|s['’]est eteinte?|a pris sa retraite|repose en paix|"
+             r"fallecio|se jubilo|descanse en paz|q\.?\s?e\.?\s?p\.?\s?d)")
 
 
 def _departed(person: dict, text: str) -> bool:
@@ -685,14 +830,16 @@ def _departed(person: dict, text: str) -> bool:
     first = re.escape(fold_accents(person["first_name"]))
     last = re.escape(fold_accents(person["last_name"].split()[-1]))
     return bool(re.search(
-        rf"(?i)(?:\bthe late|in (?:loving )?memory of|remembering|\bfeue?|(?:a la|en) memoire de(?: feue?)?)"
-        rf"\s+(?:dre?\.?\s+|m\.\s+|mme\s+)?{first}\b"
+        rf"(?i)(?:\bthe late|in (?:loving )?memory of|remembering|\bfeue?|(?:a la|en) memoire de(?: feue?)?"
+        rf"|\bel\s+difunto|\bla\s+difunta|en\s+(?:memoria|recuerdo)\s+del?)"
+        rf"\s+(?:dre?\.?\s+|dra\.?\s+|m\.\s+|mme\s+)?{first}\b"
         # A full stop only after an initial ("Harold T. Smith"): "Simon
         # Paquette. Gérald Lefebvre est décédé" is about Gérald.
         rf"|\b{first}\b(?:\s+(?:\w\.|\w+)){{0,3}}?(?:\s+{last})?\s*,?[^.]{{0,40}}?\b{_DEPARTED}", text))
 
 
-_FRENCH_TITLE = re.compile(r"(?i)^(?:co-?)?(?:proprietaire|fondat|directeur|directrice|presidente|pdg|p\.-?d\.g)"
+_FRENCH_TITLE = re.compile(r"(?i)^(?:co-?)?(?:proprietaire|fondat|directeur|directrice|presidente|pdg|p\.-?d\.g"
+                           r"|propietari|fundador|duen|presidenta|directora?\s|soci[oa]\s)"
                            r"|^president[- ]+(?:direct|et\b)")
 
 
@@ -734,14 +881,18 @@ def people_from_prose(html: str, domain: str, site_name: str = "", url: str = ""
 
     for sentence in _sentences(html):
         folded = fold_accents(sentence)
-        for regex, fixed in _PROSE + _PROSE_FR:
+        for regex, fixed in _PROSE + _PROSE_FR + _PROSE_ES:
             for m in regex.finditer(folded):
                 # Spans are the same in both; read the words as written.
                 groups = {k: (sentence[m.start(k):m.end(k)] if v is not None else None)
                           for k, v in m.groupdict().items()}
                 title = fixed or _title_word(groups.get("title") or "")
+                if title in ("Dueño", "Fundador") and re.search(
+                        r"\b(?:Dra|Licda|Sra|Srta)\b", folded[m.start():m.end()]):
+                    title = {"Dueño": "Dueña", "Fundador": "Fundadora"}[title]
                 org = fold_accents(groups.get("org") or "")
-                if org and not re.match(rf"(?i)the\s|(?:l['’]|la\s+|son\s+|sa\s+){_FR_ORG_NOUN}\b", org):
+                if org and not re.match(rf"(?i)the\s|(?:l['’]|la\s+|son\s+|sa\s+){_FR_ORG_NOUN}\b"
+                                        rf"|(?:la|el)\s+{_ES_ORG_NOUN}\b", org):
                     if not names_business(org, domain, site_name):
                         continue
                 tail = groups.get("tail")
@@ -753,8 +904,8 @@ def people_from_prose(html: str, domain: str, site_name: str = "", url: str = ""
                 # "Owner, Davis Bakery" (a customer's own business) are not;
                 # nor "présidente de Quillnest" or "président de l'Association".
                 t = fold_accents(tail).strip().lstrip(",;:-–—").strip()
-                m_org = re.match(r"^(?:(?:of|at|chez|de|du|des)\s+|d['’]|@\s*)?"
-                                 r"((?:the\s+|la\s+|le\s+|l['’])?[A-Z][\w&'’.-]*(?:\s+[A-Z][\w&'’.-]*)*)", t)
+                m_org = re.match(r"^(?:(?:of|at|chez|de|du|des|del)\s+|d['’]|@\s*)?"
+                                 r"((?:the\s+|la\s+|le\s+|el\s+|l['’])?[A-Z][\w&'’.-]*(?:\s+[A-Z][\w&'’.-]*)*)", t)
                 if m_org and not _ROLE_ONLY.fullmatch(m_org.group(1)) \
                         and not names_business(m_org.group(1), domain, site_name):
                     continue
@@ -782,8 +933,9 @@ def people_from_prose(html: str, domain: str, site_name: str = "", url: str = ""
         for raw in ([m.group(1)] if m else []) + ([h1.group(1)] if h1 else []):
             text = html_lib.unescape(re.sub(r"(?s)<[^>]+>", " ", raw))
             head = re.split(r"\s[|–—-]\s|\|", text)[0]
-            head = re.sub(r"(?i)^\s*(?:meet\s+|rencontrez\s+)?(?:attorney|dre?\.?|doctor|lawyer|founder|owner|me|"
-                          r"fondat(?:eur|rice)|propri[ée]taire|pr[ée]sidente?)\s+", "", head)
+            head = re.sub(r"(?i)^\s*(?:meet\s+|rencontrez\s+|conoce\s+a\s+)?(?:attorney|dre?\.?|dra\.?|doctor|"
+                          r"lawyer|founder|owner|me|fondat(?:eur|rice)|propri[ée]taire|pr[ée]sidente?|lic\.?|"
+                          r"abogad[oa]|fundador[a]?|due[ñn][oa])\s+", "", head)
             if split_person_name(head):
                 subject = head
                 break
@@ -844,9 +996,11 @@ def find_people(pages: list[tuple[str, str]], domain: str, site_name: str = "") 
     if current_owner:
         people = [p for p in people
                   if not (p["source"] == "prose"
-                          and fold_accents(p["title"]).lower() in ("founder", "fondateur", "fondatrice")
+                          and fold_accents(p["title"]).lower() in ("founder", "fondateur", "fondatrice",
+                                                                   "fundador", "fundadora")
                           and re.search(r"(?i)\bfounded\b[^.]*\bby\b|\bour founder\b|\bfondee?s?\b[^.]*\bpar\b"
-                                        r"|\b(?:notre|son|sa|leur)\s+fondat(?:eur|rice)\b",
+                                        r"|\b(?:notre|son|sa|leur)\s+fondat(?:eur|rice)\b"
+                                        r"|\bfundad[oa]s?\b[^.]*\bpor\b|\bnuestr[oa]\s+fundador",
                                         fold_accents(p["evidence"])))]
     for p in people:
         # Explicit current owner titles on the business's own cards first;
@@ -869,10 +1023,15 @@ _LINK_WEIGHTS = (
         r"lawyers?|physicians?|providers?|owners?|founders?|principals?|partners|who-?we-?are|bios?|"
         # French (Québec), accents folded: équipe, direction, qui sommes-nous
         r"equipe|direction|dirigeants|personnel|proprietaires?|fondat(?:eurs?|rices?)|"
-        r"qui[- ]sommes[- ]nous|rencontrez[- ]\w+"),
+        r"qui[- ]sommes[- ]nous|rencontrez[- ]\w+|"
+        # Spanish: equipo, quiénes somos, nuestro equipo
+        r"equipo|nuestro-equipo|conoce-(?:al|a-nuestro)-equipo|nuestro-personal|doctor(?:a|es|as)|"
+        r"odontologos|abogados|socios|fundador(?:a|es)?|quienes[- ]somos"),
     (2, r"about|story|history|company|firm|practice|family|"
-        r"a[- ]propos|apropos|histoire|entreprise|compagnie|famille"),
-    (1, r"contact|nous[- ]joindre|joindre|coordonnees"),
+        r"a[- ]propos|apropos|histoire|entreprise|compagnie|famille|"
+        r"nosotros|sobre-nosotros|acerca(?:-de)?(?:-nosotros)?|conocenos|historia|"
+        r"nuestra-historia|empresa|la-empresa|consultorio|clinica"),
+    (1, r"contact|nous[- ]joindre|joindre|coordonnees|contacto|contact[ae]nos"),
 )
 # A keyword counts in a whole path segment ("/our-team/", "/attorneys/",
 # "/meet-the-dentists.html") or a short menu label ("Meet the Team") — not
