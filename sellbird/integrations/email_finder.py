@@ -24,6 +24,7 @@ import logging
 import os
 import random
 import re
+import unicodedata
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional
@@ -98,8 +99,17 @@ def _clean_domain(domain: str) -> str:
     return domain
 
 
+_LATIN_FOLD_MAP = str.maketrans({
+    "ß": "ss", "æ": "ae", "œ": "oe", "ø": "o", "ł": "l", "đ": "d", "ð": "d", "þ": "th", "ı": "i",
+})
+
+
 def _clean_name_part(value: str) -> str:
-    return re.sub(r"[^a-z]", "", (value or "").lower())
+    # Fold accents the way mailbox admins type them ("Hélène" -> "helene",
+    # "Łukasz" -> "lukasz") instead of dropping the accented letter.
+    folded = unicodedata.normalize("NFKD", (value or "").lower().translate(_LATIN_FOLD_MAP))
+    folded = "".join(c for c in folded if not unicodedata.combining(c))
+    return re.sub(r"[^a-z]", "", folded)
 
 
 def build_email(pattern: str, first: str, last: str, domain: str) -> str:

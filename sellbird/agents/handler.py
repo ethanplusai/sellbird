@@ -96,10 +96,14 @@ BARE_OPT_OUTS = {"stop", "unsubscribe", "remove", "remove me", "opt out",
                  "non merci", "arret", "arreter", "desabonner", "desabonnement",
                  "desabonnez-moi", "desinscrire", "desinscription", "desinscrivez-moi",
                  "retirer", "retirez-moi",
-                 "הסר", "הסירו", "הסירי", "תסיר", "תסירו", "להסיר", "הסרה", "להסרה"}
+                 "הסר", "הסירו", "הסירי", "תסיר", "תסירו", "להסיר", "הסרה", "להסרה",
+                 # Arabic bare opt-outs
+                 "توقف", "إلغاء", "الغاء", "إلغاء الاشتراك", "الغاء الاشتراك",
+                 "غير مهتم", "لا شكرا", "لا شكراً", "احذفني", "إزالة", "ازالة"}
 # Said around a bare opt-out without changing it ("הסר בבקשה", "הסר, תודה").
 _BARE_COURTESIES = {"בבקשה", "נא", "תודה", "רבה", "por", "favor", "gracias", "saludos",
-                    "merci", "svp", "sil", "vous", "plait"}
+                    "merci", "svp", "sil", "vous", "plait",
+                    "شكرا", "شكراً", "جزيلا", "جزيلاً", "لو", "سمحت", "فضلك", "من"}
 _MOBILE_SIGNATURE_RE = re.compile(
     r"^[ \t\u200e\u200f]*(?:sent from my \w[^\n]*|get outlook for \w[^\n]*"
     r"|sent from \w+ mail[^\n]*|נשלח מ[^\n]*|קבל(?:ו)? את outlook[^\n]*"
@@ -366,10 +370,25 @@ def _spanish_opt_out(text: str):
     return None
 
 
-# Direction marks a mail client puts around Hebrew, and Hebrew vowel points:
+# Direction marks a mail client puts around Hebrew/Arabic, and vowel points:
 # they change no word, so they mustn't hide one.
 _INVISIBLE_RE = re.compile(
-    r"[\u200e\u200f\u202a-\u202e\u2066-\u2069\u0591-\u05bd\u05bf\u05c1\u05c2\u05c4\u05c5\u05c7]")
+    r"[\u200e\u200f\u202a-\u202e\u2066-\u2069\u0591-\u05bd\u05bf\u05c1\u05c2\u05c4\u05c5\u05c7\u0640\u064b-\u065f\u0670]")
+
+ARABIC_OPT_OUT_PATTERNS = (
+    r"(?:لا\s+(?:تراسل(?:ني|نا|وني)|تتواصل(?:\s+معي|\s+معنا)?|ترسل(?:وا)?\s+(?:لي|لنا)))",
+    r"(?:توقف(?:وا)?\s+عن\s+(?:مراسلتي|مراسلتنا|الإرسال|الارسال|إرسال\s+الرسائل))",
+    r"(?:(?:احذف|ازل|أزل|احذفوا|أزيلوا)(?:ني|نا|\s+بريدي|\s+ايميلي|\s+إيميلي)(?:\s+من\s+القائمة)?)",
+    r"(?:إلغاء|الغاء)\s+(?:الاشتراك|المراسلة|القائمة)",
+    r"(?:لست\s+مهتما|لست\s+مهتمة|غير\s+مهتم(?:ين|ة)?)(?=\s*(?:[.!،,]|$))",
+)
+ARABIC_OPT_OUT_RE = re.compile(r"(?<!\w)(?:" + "|".join(ARABIC_OPT_OUT_PATTERNS) + r")(?!\w)", re.MULTILINE)
+ARABIC_NO_THANKS_RE = re.compile(r"(?<!\w)لا[ \t،,]+شكرا(?:[ \t]+لك(?:م)?)?(?=[ \t]*(?:[.!،,]|$))")
+ARABIC_ESCALATION_PATTERNS = (
+    r"(?:سأقاضيكم|سنقاضيكم|رفع\s+دعوى\s+قضائية|إجراءات\s+قانونية|اجراءات\s+قانونية)",
+    r"(?:شكوى\s+رسمية|هيئة\s+الاتصالات|بلاغ\s+إزعاج|محامي\s+الشركة|مستشارنا\s+القانوني)",
+)
+ARABIC_ESCALATION_RE = re.compile(r"(?<!\w)(?:" + "|".join(ARABIC_ESCALATION_PATTERNS) + r")(?!\w)")
 # A line of their reply at least this long that repeats what Sellbird wrote
 # for this person is our text, not theirs. Shorter unmarked lines are always
 # theirs, so a reply of "No thanks" or "STOP" is never taken for a quote.
@@ -455,10 +474,15 @@ def _opt_out_reason(their_text: str, own_words: str) -> dict | None:
     if m:
         return {"rule": "phrase", "matched": m.group(0),
                 "why": f'Their reply contains "{m.group(0)}".'}
+    m = ARABIC_OPT_OUT_RE.search(flat)
+    if m:
+        return {"rule": "phrase", "matched": m.group(0),
+                "why": f'Their reply contains "{m.group(0)}".'}
     for line in their_text.split("\n"):
         line = _flat(line)
         m = (SPANISH_NO_THANKS_RE.search(_no_accents(line))
-             or FRENCH_NO_THANKS_RE.search(_no_accents(line)))
+             or FRENCH_NO_THANKS_RE.search(_no_accents(line))
+             or ARABIC_NO_THANKS_RE.search(line))
         if m:
             return {"rule": "no_thanks", "matched": m.group(0),
                     "why": f'Their reply says "{m.group(0)}" (no thanks).'}
@@ -570,7 +594,8 @@ def _escalates(flat: str) -> bool:
     # "עורך-דין" and "בית־המשפט" are the same words as with a space.
     spaced = re.sub(r"(?<=[\u05d0-\u05ea])[-\u05be](?=[\u05d0-\u05ea])", " ", flat)
     return (any(p in flat for p in ESCALATION_PATTERNS)
-            or HEBREW_ESCALATION_RE.search(spaced) is not None)
+            or HEBREW_ESCALATION_RE.search(spaced) is not None
+            or ARABIC_ESCALATION_RE.search(flat) is not None)
 
 
 # The conversation a reply is written from. Cold-email threads are short, so
