@@ -30,6 +30,15 @@ minor versions can still change behaviour.
 
 ### Changed
 
+- **"To write" counts only who the Writer can write to.** The Today funnel and
+  the Contacts filter put every new and drafted contact under To write, so the
+  dashboard could show hundreds waiting while the loop logged "none ready to
+  write for". They are now split by what each contact is waiting on: **Need an
+  email** (a guessed or missing address, waiting for the verifier), **To
+  write** (a verified or catch-all address with no draft yet, the loop's own
+  rule) and **Drafted** (waiting in the Outbox). A new contact with an invalid
+  address, or whose company already replied, counts as closed out.
+
 - **The writer sees what Sellbird read off a company's own site.** The free
   homepage signals (no structured data, a site untouched for six months, a very
   small sitemap, AI crawlers blocked) were collected but
