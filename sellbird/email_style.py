@@ -193,6 +193,19 @@ _SIGN_OFF_RE = re.compile(
     re.IGNORECASE)
 
 
+_HONORIFICS = {"dr", "mr", "mrs", "ms", "miss", "prof", "professor", "eng", "sir", "madam",
+               "د", "أ", "م", "السيد", "السيدة", "الدكتور", "الدكتورة", "الأستاذ", "المهندس"}
+
+
+def sign_off_first_name(name: str) -> str:
+    """The first real word of ``name``: "Dr. Jane Roe" signs off "Jane", not "Dr."."""
+    words = (name or "").split()
+    for word in words:
+        if word.strip(".,").lower() not in _HONORIFICS:
+            return word
+    return words[0] if words else ""
+
+
 def with_sign_off(body: str, name: str) -> str:
     """``body`` ending in the sender's first name on its own line, and no
     other sign-off.
@@ -200,7 +213,7 @@ def with_sign_off(body: str, name: str) -> str:
     Models sign off three different ways in ten emails ("Best,", "Thanks,",
     none at all); one plain name under every email reads like a person who
     writes a lot of email. An empty ``name`` leaves the body as it is."""
-    first = (name or "").strip().split(" ")[0] if (name or "").strip() else ""
+    first = sign_off_first_name(name) if (name or "").strip() else ""
     if not first:
         return body
     full = (name or "").strip().lower()

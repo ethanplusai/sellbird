@@ -18,7 +18,7 @@ from sellbird.brain import Brain
 from sellbird.config import EmailRulesError, SellbirdConfig, compliance_of, load_email_rules
 from sellbird.email_style import (
     BREAKUP_MAX_WORDS, FIRST_EMAIL_MAX_WORDS, FOLLOW_UP_MAX_WORDS,
-    style_problems, tidy, with_sign_off,
+    sign_off_first_name, style_problems, tidy, with_sign_off,
 )
 from sellbird.humanize import humanize, humanizer_enabled
 from sellbird.integrations.mail_provider import NATIVE_PROVIDERS
@@ -828,7 +828,7 @@ Return ONLY a JSON array of {length} item{"" if length == 1 else "s"} (no markdo
         body = draft["body"]
         if shape:
             # The sign-off is Sellbird's; the model never sees or writes it.
-            first = (self.config.persona.name or "").strip().split(" ")[0]
+            first = sign_off_first_name(self.config.persona.name)
             if first and body.endswith("\n\n" + first):
                 body = body[: -len(first) - 2].rstrip()
         payload = {"subject": draft["subject"], "body": body}
