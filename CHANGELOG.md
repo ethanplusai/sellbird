@@ -423,6 +423,17 @@ sellbird dashboard
 
 ### Fixed
 
+- **DataForSEO SERP finds businesses again.** Google now links organic
+  results through its own redirect (`google.com/goto?url=...`) and local-pack
+  entries to a Google viewer, so DataForSEO named Google instead of the
+  business: every organic result was dropped as an aggregator, and local-pack
+  entries without a cid collapsed into one "google.com" company. A Google host
+  is never taken as the business now; the real host comes from the result's
+  breadcrumb (with its homepage as the website), and a pack entry pointing at
+  Google keeps its cid or is skipped. SERP and Maps searches also use the
+  language of the country named in the place ("Musterstadt, Deutschland" is
+  searched in German) instead of always English; a two-letter tail like
+  "Dover, DE" stays English.
 - **Instantly's daily cap counts your local day, not UTC** (from #177 by
   @solvejet-team), so the cap resets at your midnight.
 - **A fresh install reads right with nothing in it.** `sellbird status` prints

@@ -214,6 +214,83 @@ async def test_local_pack_is_parsed_and_ads_are_dropped():
     assert northvale.rank == 1 and northvale.local_pack_rank is None
 
 
+# ── Google redirect links ──
+# Google now links organic results through google.com/goto and local-pack
+# entries to a Google viewer; the real host survives only in `breadcrumb`.
+
+REDIRECTED = _envelope([
+    {"type": "local_pack", "rank_group": 1, "rank_absolute": 1, "position": "left",
+     "title": "Pack Jeweller", "domain": "www.google.com",
+     "url": "https://www.google.com/searchviewer/10?svid=abc", "is_paid": False},
+    {"type": "local_pack", "rank_group": 2, "rank_absolute": 2, "position": "left",
+     "title": "Pack Goldsmith", "domain": "www.google.com",
+     "url": "https://www.google.com/searchviewer/10?svid=def", "is_paid": False,
+     "cid": "444"},
+    {"type": "organic", "rank_group": 1, "rank_absolute": 4, "position": "left",
+     "domain": "google.com", "url": "https://google.com/goto?url=CAESabc",
+     "breadcrumb": "https://www.brightgold.example › trauringe",
+     "title": "Brightgold Jewellers | Rings"},
+    {"type": "organic", "rank_group": 2, "rank_absolute": 5, "position": "left",
+     "domain": "google.com", "url": "https://google.com/goto?url=CAESdef",
+     "breadcrumb": "Maps", "title": "No host here"},
+    {"type": "organic", "rank_group": 3, "rank_absolute": 6, "position": "left",
+     "domain": "google.com", "url": "https://google.com/goto?url=CAESghi",
+     "breadcrumb": "https://maps.google.de › place", "title": "Google itself"},
+    {"type": "organic", "rank_group": 4, "rank_absolute": 7, "position": "left",
+     "domain": "silverline.example", "url": "https://silverline.example/shop",
+     "breadcrumb": "https://silverline.example › shop", "title": "Silverline"},
+])
+
+
+@pytest.mark.asyncio
+async def test_google_redirect_results_resolve_to_the_breadcrumb_host():
+    _, out = await _capture(D.DataForSEOSerp(), D.DiscoveryQuery(
+        term="Juwelier", location="Musterstadt, Deutschland"), REDIRECTED)
+    domains = {b.domain for b in out}
+    assert not any("google" in d for d in domains), "a Google host is never the business"
+
+    gold = next(b for b in out if b.domain == "brightgold.example")
+    assert gold.rank == 1 and gold.website == "https://www.brightgold.example/"
+    # A direct link still wins over the breadcrumb.
+    silver = next(b for b in out if b.domain == "silverline.example")
+    assert silver.website == "https://silverline.example/shop"
+
+    # A pack entry pointing at Google keeps its cid, or is dropped without one,
+    # instead of every pack entry collapsing into one "google.com" company.
+    assert [b.external_id for b in out if b.local_pack_rank] == ["dataforseo:cid:444"]
+    assert len(out) == 3
+
+
+@pytest.mark.parametrize("item,expected", [
+    ({"domain": "acme.com", "url": "https://acme.com/a"}, ("acme.com", "https://acme.com/a")),
+    ({"domain": "google.com", "url": "https://google.com/goto?url=x",
+      "breadcrumb": "www.acme.com › a"}, ("acme.com", "https://www.acme.com/")),
+    ({"domain": "google.com", "breadcrumb": "Read more"}, ("", "")),
+    ({"domain": "www.google.co.uk", "breadcrumb": "https://news.google.co.uk › x"}, ("", "")),
+    ({}, ("", "")),
+])
+def test_serp_target(item, expected):
+    assert D.serp_target(item) == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("location,lang", [
+    ("Musterstadt, Deutschland", "de"),
+    ("Musterstadt, Germany", "de"),
+    ("Musterstadt, Österreich", "de"),
+    ("Lyon, France", "fr"),
+    ("Denver, CO", "en"),
+    ("Dover, DE", "en"),        # Delaware, not Germany
+    ("Musterstadt", "en"),
+    ("", "en"),
+])
+async def test_search_language_follows_the_country(location, lang):
+    for provider in (D.DataForSEOSerp(), D.DataForSEOMaps()):
+        seen, _ = await _capture(provider, D.DiscoveryQuery(term="x", location=location),
+                                 _envelope([]))
+        assert seen["body"]["language_code"] == lang
+
+
 # ── Google Maps ──
 
 
