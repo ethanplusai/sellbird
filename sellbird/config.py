@@ -74,6 +74,10 @@ class ICPConfig(BaseModel):
     # hiring a "Head of Growth" is buying growth tooling). Empty → falls back
     # to `titles`. Used for careers-page scanning and job-board discovery.
     hiring_signals: list[str] = []
+    # True: the hiring preset searches for those roles offered remotely
+    # ("python developer" remote careers ...), for sellers whose people work
+    # from somewhere else (agencies, staffing, contractors).
+    hiring_remote: bool = False
     # Discovery needs a radius, not a place name. Maps each entry in
     # `geography` to "lat,lng,radius_km" — e.g.
     #   "Denver, CO": "39.7392,-104.9903,50"

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import re
 
+from sellbird.collectors.ats import Posting, matching_roles
 from sellbird.collectors.people import title_matches
 from sellbird.gate import do_not_contact_match
 
@@ -33,10 +34,17 @@ def _hiring_terms(icp) -> list[str]:
 
 
 def _role_matches(text: str, terms: list[str]) -> str:
-    """The first hiring term found in ``text`` as whole words, or ""."""
-    low = (text or "").lower()
+    """The first hiring term that ``text``'s role title matches, or "".
+
+    Matched the way job boards and careers pages are ("VP Marketing" is "VP of
+    Marketing", "Full Stack" is "Full-Stack"), on the title alone: a row reads
+    "Title · Department · Location", and the department isn't the role.
+    """
+    title = (text or "").split(" · ", 1)[0]
+    low = title.lower()
     for term in terms:
-        if re.search(rf"(?<![\w-]){re.escape(term)}(?![\w-])", low):
+        if re.search(rf"(?<![\w-]){re.escape(term)}(?![\w-])", low) or \
+                matching_roles([Posting(title=title)], [term]):
             return term
     return ""
 

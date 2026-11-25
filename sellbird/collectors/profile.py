@@ -23,7 +23,9 @@ import httpx
 from sellbird.public_http import public_http_client
 from sellbird.startups import funding_text
 
-from sellbird.collectors.ats import detect_board, matching_roles, read_board, role_keywords
+from sellbird.collectors.ats import (
+    Posting, detect_board, hiring_keywords, matching_roles, read_board, role_keywords, says_remote,
+)
 
 from sellbird.collectors.discover import (
     name_from_domain, name_matches_domain, site_name_from_html,
@@ -263,6 +265,74 @@ def title_looks_like_role(text: str) -> bool:
     a person — requiring a role is the cheapest high-precision filter.
     """
     return bool(ROLE_HINT.search(fold_accents(text[:160])))
+
+
+_ROLE_TAGS = "a, h1, h2, h3, h4, h5, li, dt, td, [class*=title], [class*=job], [class*=position], [class*=role]"
+# The element that holds one role's listing: a list item, a table row, an
+# article, or a block named for a job. Its text is where "Remote" belongs to
+# this role and not to the one beside it.
+_CARD_TAGS = frozenset({"li", "tr", "article", "dd"})
+_CARD_CLASS = re.compile(r"job|card|opening|position|role|posting|vacanc", re.I)
+_NOT_CARD_CLASS = re.compile(r"title|name|link|label|heading", re.I)
+_CARD_CHARS = 400
+
+
+def _el_text(el) -> str:
+    return re.sub(r"\s+", " ", html_unescape(el.get_text(" "))).strip()
+
+
+def _role_card(el):
+    """The nearest ancestor (or ``el`` itself) holding just this role, or
+    None. Never a whole list: a card that long is a section of the page."""
+    for node in (el, *el.parents):
+        name = getattr(node, "name", None)
+        if name in (None, "body", "html", "[document]"):
+            return None
+        # "job-title" and "job-link" name the title, not the card around it.
+        classes = [c for c in (node.get("class") or []) if not _NOT_CARD_CLASS.search(c)]
+        if name in _CARD_TAGS or (node is not el and _CARD_CLASS.search(" ".join(classes))):
+            return node if len(_el_text(node)) <= _CARD_CHARS else None
+    return None
+
+
+def careers_page_roles(html: str, keywords: list[str]) -> list[tuple[str, bool]]:
+    """(title, remote) for each role on a careers page that matches one of
+    ``keywords``, in page order.
+
+    Reads the whole page, nested markup included (``<a><span>Title</span></a>``,
+    ``<div class="job-title">``), and keeps only what matches, so the nav links
+    and "Apply now" buttons around the roles never count. ``remote`` is True
+    when the role's own listing offers it remotely, never because a role
+    beside it does.
+    """
+    from bs4 import BeautifulSoup
+
+    if not html or not keywords:
+        return []
+    try:
+        soup = BeautifulSoup(_strip_code(html), "html.parser")
+        elements = soup.select(_ROLE_TAGS)
+    except Exception:
+        return []
+    matches = []
+    for el in elements[:1500]:
+        text = _el_text(el)
+        if 4 <= len(text) <= 120 and matching_roles([Posting(title=text)], keywords):
+            matches.append((el, text))
+    # A title inside a link inside a heading matches three times: keep the
+    # innermost, whose text is the title alone. Two different roles never
+    # sit inside one another, so "Software Engineer" and "Senior Software
+    # Engineer" both stay.
+    inner = {id(m) for el, _ in matches for m in el.parents}
+    found: list[tuple[str, bool]] = []
+    seen: set[str] = set()
+    for el, text in matches:
+        if id(el) in inner or text.lower() in seen:
+            continue
+        seen.add(text.lower())
+        card = _role_card(el)
+        found.append((text, says_remote(_el_text(card) if card is not None else text)))
+    return found
 
 
 def _strip_code(html: str) -> str:
@@ -848,12 +918,16 @@ class ProfileCollector:
     """
 
     def __init__(self, state, confirmed: set[str] | None = None, timeout: float = 12.0,
-                 role_keywords: list[str] | None = None):
+                 role_keywords: list[str] | None = None,
+                 careers_keywords: list[str] | None = None):
         self.state = state
         self.confirmed = confirmed if confirmed is not None else set()
         self.timeout = timeout
         # icp.hiring_signals (or icp.titles): which open roles are worth a row.
         self.role_keywords = list(role_keywords or [])
+        # icp.hiring_signals alone: what a careers page with no job board is
+        # matched against. Empty keeps the generic careers-page scan.
+        self.careers_keywords = list(careers_keywords or [])
         self._client: httpx.AsyncClient | None = None
         self.site_names: dict[str, str] = {}
         # Hosts that answered with a bot challenge (SiteGround's 202,
@@ -951,16 +1025,32 @@ class ProfileCollector:
         if postings is not None:
             add("OPEN_ROLES", num=len(postings), text=board.label, url=board.page_url)
             keywords = getattr(self, "role_keywords", None) or []
-            matched = matching_roles(postings, keywords)[:MAX_BOARD_ROLES]
-            for post in matched:
+            matched = matching_roles(postings, keywords)
+            for post in matched[:MAX_BOARD_ROLES]:
                 add("HIRING_ROLE", text=post.summary(), url=post.url or board.page_url)
             if not matched:
                 # The board answered and lists nothing relevant: say so, so
                 # last month's (now closed) roles stop being the current view.
                 add("HIRING_ROLE", num=0, url=board.page_url)
+            remote = [p for p in matched if says_remote(f"{p.title} {p.location}")]
+            add("REMOTE_ROLE", num=len(remote),
+                text=remote[0].summary() if remote else "",
+                url=(remote[0].url if remote else "") or board.page_url)
             return
         if board and not chtml:
             curl, chtml = await self._careers_page(site, home, domain)
+        if chtml and self.careers_keywords:
+            # The user named the roles that matter: record those and only
+            # those. A page that lists none closes earlier rows, as a board does.
+            roles = careers_page_roles(chtml, self.careers_keywords)
+            for title, remote in roles[:MAX_BOARD_ROLES]:
+                add("HIRING_ROLE", text=f"{title} · Remote" if remote and not says_remote(title)
+                    else title, url=curl)
+            if not roles:
+                add("HIRING_ROLE", num=0, url=curl)
+            remote = [t for t, r in roles if r]
+            add("REMOTE_ROLE", num=len(remote), text=remote[0] if remote else "", url=curl)
+            return
         if chtml and self.wants("HIRING_ROLE"):
             roles = []
             for m in re.finditer(
@@ -1284,7 +1374,7 @@ class ProfileCollector:
         # links one (titles, departments and dates for every role), else
         # whatever the careers page's own HTML lists. Any failure here costs
         # only these two signals, never the rest of the profile.
-        if self.wants("HIRING_ROLE") or self.wants("OPEN_ROLES"):
+        if self.wants("HIRING_ROLE") or self.wants("OPEN_ROLES") or self.wants("REMOTE_ROLE"):
             try:
                 await self._hiring(site, home, domain, add)
             except Exception as e:
@@ -1376,8 +1466,9 @@ async def profile_companies(state, companies: list[dict], config=None) -> tuple[
         return 0, ""
     run_id = await state.start_run("profile", provider="http")
     try:
-        keywords = role_keywords(getattr(config, "icp", None))
-        async with ProfileCollector(state, confirmed, role_keywords=keywords) as collector:
+        icp = getattr(config, "icp", None)
+        async with ProfileCollector(state, confirmed, role_keywords=role_keywords(icp),
+                                    careers_keywords=hiring_keywords(icp)) as collector:
             n = await collector.run(companies, run_id=run_id)
         await state.finish_run(run_id, records=n, cost_usd=0.0)
         return n, run_id

@@ -297,6 +297,21 @@ SIGNAL_CATALOG: list[dict] = [
         "cost_note": "free (public job-board feed, one request)",
         "confidence_floor": 0.0,
     },
+    {
+        "code": "REMOTE_ROLE",
+        "label": "Hiring remotely for a relevant role",
+        "description": (
+            "How many of their open hiring_signals roles they'd fill remotely: the "
+            "role's location on their job board, or its own listing on their careers "
+            "page, says remote. A team already hiring remote is open to people who "
+            "aren't in the office."
+        ),
+        "category": "profile",
+        "value_type": "num",
+        "collector": "profile",
+        "cost_note": "free (careers page or public job-board feed)",
+        "confidence_floor": 0.0,
+    },
 
     # ── People: who decides ──
     {

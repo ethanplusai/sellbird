@@ -330,6 +330,28 @@ def role_keywords(icp) -> list[str]:
             if isinstance(t, str) and t.strip()]
 
 
+def hiring_keywords(icp) -> list[str]:
+    """``icp.hiring_signals`` only, lowercased: no fallback to ``titles``.
+
+    A careers page with no job board is matched against these, because the
+    roles a user chose mean something there; the titles they email do not.
+    """
+    return [k.strip().lower() for k in (getattr(icp, "hiring_signals", None) or [])
+            if isinstance(k, str) and k.strip()]
+
+
+# "Remote", "Remote (US)", "work from anywhere", "fully distributed"; not
+# "no remote", "not remote" or "non-remote".
+_REMOTE = re.compile(
+    r"(?<![a-z])(?<!no )(?<!not )(?<!non-)(?<!non )"
+    r"(remote(ly)?|work from (home|anywhere)|fully distributed)(?![a-z])", re.I)
+
+
+def says_remote(text: str) -> bool:
+    """True when ``text`` offers the role remotely."""
+    return bool(_REMOTE.search(text or ""))
+
+
 def matching_roles(postings: list[Posting], keywords: list[str]) -> list[Posting]:
     """Postings whose title holds every word of some keyword, in any order:
     "VP Marketing" matches "VP of Marketing", "cto" doesn't match "Director"."""

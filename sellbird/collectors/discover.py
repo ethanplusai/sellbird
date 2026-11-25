@@ -92,8 +92,17 @@ JUNK_DOMAIN_PATTERNS = tuple(re.compile(p, re.I) for p in (
     r"\.(icims|bamboohr|recruitee|teamtailor)\.com$",
     r"\.breezy\.hr$",
     r"\.jobs\.personio\.(de|com)$",
-    # job sites named for the job: jobs.com, careers.co.uk
+    # more hosted boards: the company's board is a subdomain of the vendor
+    r"\.(careers-page|getro|pinpointhq|jobscore|zohorecruit|freshteam|jazzhr)\.com$",
+    # job sites named for the job: jobs.com, careers.co.uk, and the .jobs TLD
     r"^(jobs|careers)\.((co|com|org|net|ac)\.)?[a-z]{2,}$",
+    r"\.jobs$",
+    # job aggregators and remote-job boards (the hiring preset's noise)
+    r"(^|\.)(jooble|adzuna|simplyhired|careerbuilder|jora|remoteok|weworkremotely|remotive)\.",
+    r"(^|\.)(talent|dice|monster|totaljobs|stepstone|welcometothejungle|otta)\.com$",
+    r"(^|\.)builtin(nyc|sf|la|boston|austin|seattle|chicago|colorado|toronto|london)?\.(com|org|uk)$",
+    r"(^|\.)(reed|cv-library)\.co\.uk$",
+    r"(^|\.)seek\.com\.au$",
     # accelerators' own sites (the accelerator preset's noise)
     r"(^|\.)(techstars|antler|joinef|southparkcommons|aigrant|a16z|pioneer|plugandplaytechcenter|plugandplay)\.",
     r"(^|\.)(500\.co|neo\.com)$",
@@ -1565,14 +1574,14 @@ PRESETS = {
         "local": False,
     },
     # Companies hiring for one of your hiring_signals roles (else ICP titles),
-    # found by their OWN careers pages. The hosted boards are excluded: a
+    # found by their OWN careers pages; offered remotely with icp.hiring_remote. The hosted boards are excluded: a
     # boards.greenhouse.io hit names a board, not a website to profile.
     # Profiling then reads the board their site links to and records the
     # role (HIRING_ROLE); the search hit alone records nothing.
     "hiring": {
         "label": "Companies hiring for your roles",
         "kinds": ("serp",),
-        "term": ('"{role}" careers {industry} -site:greenhouse.io -site:lever.co '
+        "term": ('"{role}" {remote}careers {industry} -site:greenhouse.io -site:lever.co '
                  "-site:ashbyhq.com -site:workable.com -site:smartrecruiters.com "
                  "-site:jobvite.com -site:icims.com -site:bamboohr.com -site:recruitee.com "
                  "-site:teamtailor.com -site:personio.de -site:breezy.hr -site:applytojob.com "
@@ -1670,7 +1679,8 @@ def build_queries(config, cities: list[str] | None = None,
         since = (date.today() - timedelta(days=FUNDING_LOOKBACK_DAYS)).isoformat()
         from sellbird.collectors.ats import role_keywords
         roles = role_keywords(icp) if any("{role}" in tpl for tpl in templates) else [""]
-        terms = [tpl.format(industry=t, role=r, since=since)
+        remote = "remote " if getattr(icp, "hiring_remote", False) else ""
+        terms = [tpl.format(industry=t, role=r, since=since, remote=remote)
                  for r in roles for t in terms for tpl in templates]
         places = cities if cities is not None else ([""] if not spec["local"] else list(icp.geography) or [""])
     else:

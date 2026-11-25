@@ -7,6 +7,15 @@ minor versions can still change behaviour.
 
 ## [Unreleased]
 
+### Added
+
+- **Remote hiring.** A new `REMOTE_ROLE` signal counts a company's open `hiring_signals` roles that it would fill remotely, from the job-board posting's location or the role's own listing on its careers page. `icp.hiring_remote: true` makes the `hiring` preset search for those roles offered remotely. For sellers whose people work from elsewhere: agencies, staffing firms, contractors.
+
+### Changed
+
+- **Careers pages are matched against your roles.** A careers page with no Greenhouse, Lever, Ashby or Workable board was read for trades words (technician, installer, sales, manager), whatever `icp.hiring_signals` said, so a software company's "Account Manager" or "Apply now" link counted as hiring and its "Senior Python Developer" didn't. With `hiring_signals` set, the page is now matched the way a board is (nested markup included), only matching roles are recorded, and a page listing none records "not hiring" so earlier rows stop counting. The fit score matches roles the same way, so "Full Stack Engineer" counts for "Full-Stack Engineer". Without `hiring_signals`, careers pages are read as before.
+- **More job sites are filtered out of discovery:** the `.jobs` domains, job aggregators and remote-job boards, and boards hosted on Getro, Careers Page and similar vendors, which the `hiring` preset used to return as companies.
+
 ## [0.5.0] - 2026-11-24
 
 **Your sales team, inside your agent.** Sellbird now lives where you already

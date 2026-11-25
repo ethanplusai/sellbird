@@ -93,3 +93,13 @@ def test_a_contact_on_the_do_not_contact_list_doesnt_count():
     jo = {**person(), "email": "jo@acme.example"}
     score, _ = company_fit(ACME, [jo], [], config(dnc=["jo@acme.example"]))
     assert score == 20
+
+
+def test_a_role_matches_the_way_boards_match_it():
+    cfg = config()
+    cfg.icp.hiring_signals = ["Full-Stack Engineer", "VP Marketing"]
+    for text, hit in [("Full Stack Engineer · Engineering · Remote", "full-stack engineer"),
+                      ("VP of Marketing · Marketing · New York, NY", "vp marketing"),
+                      ("Account Manager · Engineering Sales · Remote", "")]:
+        _, reasons = company_fit(ACME, [], [{"signal_code": "HIRING_ROLE", "value_text": text}], cfg)
+        assert (f"hiring: {hit}" in reasons) if hit else ("careers page, no matching role" in reasons)

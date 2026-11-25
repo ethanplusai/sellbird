@@ -16,14 +16,14 @@ import pytest
 import pytest_asyncio
 
 from sellbird.collectors.ats import (
-    MAX_FEED_BYTES, Board, detect_board, feed_url, matching_roles, parse_feed,
-    read_board, role_keywords,
+    MAX_FEED_BYTES, Board, detect_board, feed_url, hiring_keywords, matching_roles, parse_feed,
+    read_board, role_keywords, says_remote,
 )
 from sellbird.collectors.discover import (
     Business, DiscoveryProvider, DiscoveryQuery, PRESETS, _observations, build_queries, is_junk,
     preset_problem, run_discovery,
 )
-from sellbird.collectors.profile import ProfileCollector, profile_companies
+from sellbird.collectors.profile import ProfileCollector, careers_page_roles, profile_companies
 from sellbird.models.company import Company
 from sellbird.signals import SIGNAL_CATALOG, seed_signal_catalog
 from sellbird.state import StateManager
@@ -610,3 +610,140 @@ def test_the_hiring_preset_excludes_other_ats_hosts():
     [q] = build_queries(_config(hiring=("SDR",)), preset="hiring")
     for site in ("smartrecruiters.com", "jobvite.com", "icims.com", "bamboohr.com", "myworkdayjobs.com"):
         assert f"-site:{site}" in q.term
+
+
+# ── careers pages with no job board: matched against icp.hiring_signals ──
+
+CAREERS = """<html><body>""" + "z" * 600 + """
+<nav><a href="/">Home</a><a href="/careers">Careers</a><a href="/apply">Apply now</a></nav>
+<h2>Open positions</h2>
+<ul>
+  <li class="opening"><a href="/careers/1"><span>Senior Python Developer</span></a>
+      <span class="loc">Remote (US)</span></li>
+  <li class="opening"><a href="/careers/2"><span>Account Manager</span></a>
+      <span class="loc">Remote</span></li>
+</ul>
+<div class="card"><div class="job-title">Full Stack Engineer</div><p>Austin, TX · On-site</p></div>
+<div class="card"><div class="job-title">Senior Data Engineer</div><p>Remote · Europe</p></div>
+<p>We are not a remote-first company for every team.</p>
+</body></html>"""
+
+
+def test_careers_page_roles_keeps_only_matching_roles_with_their_own_remote_flag():
+    roles = careers_page_roles(CAREERS, ["python developer", "full-stack engineer", "data engineer"])
+    assert roles == [("Senior Python Developer", True), ("Full Stack Engineer", False),
+                     ("Senior Data Engineer", True)]
+
+
+def test_remote_belongs_to_the_role_whose_listing_says_it():
+    page = ("<ul><li><a href='/1'>Backend Engineer</a> <span>Lisbon, on-site</span></li>"
+            "<li><a href='/2'>Account Manager</a> <span>Remote</span></li></ul>")
+    assert careers_page_roles(page, ["backend engineer"]) == [("Backend Engineer", False)]
+    # No card around the title at all: only the title's own words count.
+    page = "<div><h3>Backend Engineer</h3><h3>Sales Lead</h3><p>All roles remote</p></div>"
+    assert careers_page_roles(page, ["backend engineer"]) == [("Backend Engineer", False)]
+
+
+def test_similar_titles_are_different_roles_and_nested_copies_are_one():
+    page = ("<ul><li><h3><a href='/1'><span>Software Engineer</span></a></h3></li>"
+            "<li><h3><a href='/2'>Senior Software Engineer</a></h3></li></ul>")
+    assert careers_page_roles(page, ["software engineer"]) == [
+        ("Software Engineer", False), ("Senior Software Engineer", False)]
+
+
+def test_careers_page_roles_needs_keywords():
+    assert careers_page_roles(CAREERS, []) == []
+    assert careers_page_roles("", ["python developer"]) == []
+
+
+@pytest.mark.asyncio
+async def test_a_careers_page_is_matched_against_hiring_signals():
+    c = _collector({"HIRING_ROLE", "REMOTE_ROLE"},
+                   {"https://acme.com": HOME, "https://acme.com/careers": CAREERS}, {})
+    c.careers_keywords = ["python developer", "full stack engineer"]
+    obs = await c.profile_company("c1", "acme.com")
+    assert [(o["signal_code"], o["value_num"], o["value_text"]) for o in obs] == [
+        ("HIRING_ROLE", None, "Senior Python Developer · Remote"),
+        ("HIRING_ROLE", None, "Full Stack Engineer"),
+        ("REMOTE_ROLE", 1, "Senior Python Developer"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_careers_page_with_no_matching_role_closes_earlier_rows():
+    c = _collector({"HIRING_ROLE", "REMOTE_ROLE"},
+                   {"https://acme.com": HOME, "https://acme.com/careers": CAREERS}, {})
+    c.careers_keywords = ["machine learning engineer"]
+    obs = await c.profile_company("c1", "acme.com")
+    assert [(o["signal_code"], o["value_num"], o["value_text"]) for o in obs] == [
+        ("HIRING_ROLE", 0, ""), ("REMOTE_ROLE", 0, "")]
+
+
+@pytest.mark.asyncio
+async def test_a_board_counts_its_remote_matching_roles():
+    home = HOME.replace("/careers", "https://boards.greenhouse.io/acme")
+    c = _collector({"HIRING_ROLE", "REMOTE_ROLE"}, {"https://acme.com": home},
+                   {"https://boards-api.greenhouse.io/v1/boards/acme/departments": GREENHOUSE},
+                   keywords=["backend engineer", "head of growth"])
+    obs = await c.profile_company("c1", "acme.com")
+    [remote] = [o for o in obs if o["signal_code"] == "REMOTE_ROLE"]
+    assert remote["value_num"] == 1 and remote["value_text"].startswith("Backend Engineer · Engineering · Remote")
+    assert remote["evidence_url"] == "https://boards.greenhouse.io/acme/jobs/12"
+
+
+@pytest.mark.asyncio
+async def test_profile_companies_passes_hiring_signals_alone_to_careers_pages(state, monkeypatch):
+    await seed_signal_catalog(state)
+    await state.set_signal_status("HIRING_ROLE", "confirmed")
+    seen = {}
+
+    async def fake_run(self, companies, run_id=""):
+        seen["careers"] = self.careers_keywords
+        return 0
+
+    monkeypatch.setattr(ProfileCollector, "run", fake_run)
+    await profile_companies(state, [], config=SimpleNamespace(
+        icp=SimpleNamespace(hiring_signals=[], titles=["CEO"])))
+    assert seen["careers"] == []          # titles never stand in for roles on a careers page
+    await profile_companies(state, [], config=SimpleNamespace(
+        icp=SimpleNamespace(hiring_signals=["Python Developer"], titles=["CEO"])))
+    assert seen["careers"] == ["python developer"]
+
+
+@pytest.mark.parametrize("text, remote", [
+    ("Remote (US)", True), ("Backend Engineer · Remote", True), ("Open to working remotely", True),
+    ("Work from anywhere", True), ("Fully distributed team", True),
+    ("Hybrid, London", False), ("No remote", False), ("Not remote", False),
+    ("Non-remote role", False), ("Remoteness index analyst", False), ("", False),
+])
+def test_says_remote(text, remote):
+    assert says_remote(text) is remote
+
+
+def test_hiring_keywords_never_fall_back_to_titles():
+    assert hiring_keywords(SimpleNamespace(hiring_signals=[], titles=["CEO"])) == []
+    assert hiring_keywords(SimpleNamespace(hiring_signals=[" Python Developer "])) == ["python developer"]
+
+
+def test_remote_role_is_a_free_profile_signal():
+    sig = next(s for s in SIGNAL_CATALOG if s["code"] == "REMOTE_ROLE")
+    assert sig["collector"] == "profile" and sig["value_type"] == "num" and "free" in sig["cost_note"]
+
+
+def test_the_hiring_preset_can_ask_for_remote_roles():
+    cfg = _config(industries=("fintech",), hiring=("Python Developer",))
+    [plain] = [q.term for q in build_queries(cfg, preset="hiring")]
+    assert plain.startswith('"python developer" careers fintech')
+    cfg.icp.hiring_remote = True
+    [remote] = [q.term for q in build_queries(cfg, preset="hiring")]
+    assert remote.startswith('"python developer" remote careers fintech')
+
+
+@pytest.mark.parametrize("domain, junk", [
+    ("acme.jobs", True), ("acme.careers-page.com", True), ("acme.getro.com", True),
+    ("careers-page.com", False), ("getro.com", False),
+    ("talent.com", True), ("uk.talent.com", True), ("builtinnyc.com", True),
+    ("talentacme.com", False), ("acmestaffing.com", False), ("acmejobsboard.example", False),
+])
+def test_job_aggregators_and_hosted_boards_are_not_prospects(domain, junk):
+    assert is_junk(domain) is junk
