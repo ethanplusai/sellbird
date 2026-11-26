@@ -123,6 +123,18 @@ def test_unconfirmed_emails_are_reported_not_hidden(client, env):
     assert "1 not confirmed" in step["detail"]
 
 
+def test_people_ruled_out_do_not_hold_the_email_steps_open(client, env):
+    _prospect(env, "p1", "a@acme.test", email_status="verified")
+    _prospect(env, "p2", "b@acme.test", email_status="guess", status="lost")
+    _prospect(env, "p3", "c@acme.test", email_status="verified", status="opted_out")
+    data = client.get("/api/live-status").json()
+    check = _step(data, "Check emails are real")
+    assert (check["done"], check["total"], check["state"]) == (1, 1, "done")
+    assert "0 not confirmed" in check["detail"]
+    assert _step(data, "Write first emails")["total"] == 1
+    assert data["next"] == "Write first emails for 1 more contact(s)."
+
+
 def test_a_live_run_shows_progress_and_time_left(client, env):
     _sql(env, "INSERT INTO runs (id, stage, status, provider, started_at) "
               "VALUES ('r1', 'profile', 'running', 'http', ?)", (_ts(10),))

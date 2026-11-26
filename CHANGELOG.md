@@ -434,6 +434,11 @@ sellbird dashboard
 - **Hosted Sellbird isn't promised before it ships.** Connect, Your agent and
   Everything Sellbird does no longer send ChatGPT users or the phone line and
   hosted forms to a hosted version that isn't out yet.
+- **The Today pipeline's email steps can finish.** "Check emails are real"
+  and "Write first emails" no longer count people marked not relevant or
+  opted out. Someone you ruled out is never checked or written to again, so
+  counting them held both steps short of done for good, and "Write first
+  emails for N more contact(s)" asked for emails to people you'd excluded.
 
 ## [0.4.0] - 2026-11-06
 
