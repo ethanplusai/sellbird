@@ -96,6 +96,7 @@ HUNTER_API_KEY=             # 50 free/mo + pattern lookup
 
 # --- Discovery (optional — the free OpenStreetMap source needs no key) ---
 TINYFISH_API_KEY=                         # free web search (30/min, 500/hr); no rank signals
+AIMLAPI_API_KEY=                          # paid-per-search web search (AI/ML API); no rank signals
 DATAFORSEO_LOGIN=  DATAFORSEO_PASSWORD=   # cheapest local-business + SERP data
 DATAFORSEO_SANDBOX=                       # any value routes to the free sandbox
 

@@ -8,9 +8,10 @@ real people/companies.
 Search backends (in priority order):
 1. SERP API (Serper.dev) — if SERPER_API_KEY is set, reliable and fast
 2. TinyFish Search API — if TINYFISH_API_KEY is set (free, 30 searches a minute)
-3. DuckDuckGo HTML — free, no rate limiting, good fallback
-4. Bing — free, less aggressive than Google
-5. Google — aggressive rate limiting, used last
+3. AI/ML API web search — if AIMLAPI_API_KEY is set (paid per search)
+4. DuckDuckGo HTML — free, no rate limiting, good fallback
+5. Bing — free, less aggressive than Google
+6. Google — aggressive rate limiting, used last
 
 Each cycle runs 2-3 queries max to avoid rate limits. Queries are
 tracked in the DB so they spread across heartbeat cycles.
@@ -38,7 +39,7 @@ from bs4 import BeautifulSoup
 
 from sellbird.brain import Brain
 from sellbird.collectors import people as people_mod
-from sellbird.collectors.discover import site_name_from_html
+from sellbird.collectors.discover import aimlapi_results, aimlapi_web_search, site_name_from_html
 from sellbird.collectors.profile import _reads_like_title, fold_accents, looks_like_challenge
 from sellbird.config import SellbirdConfig, EnvConfig, live_do_not_contact
 from sellbird.gate import do_not_contact_domain_match
@@ -392,7 +393,8 @@ class Scout:
         """Search the web using the best available backend.
 
         Returns list of (url, snippet) tuples.
-        Tries backends in order: Serper API → TinyFish Search API → DuckDuckGo → Bing → Google.
+        Tries backends in order: Serper API → TinyFish Search API → AI/ML API →
+        DuckDuckGo → Bing → Google.
         """
         if self._queries_this_cycle >= MAX_QUERIES_PER_CYCLE:
             logger.info("Scout: Query limit reached for this cycle. Will continue next cycle.")
@@ -406,11 +408,14 @@ class Scout:
 
         serper_key = getattr(self.env, "serper_api_key", "") or ""
         tinyfish_key = getattr(self.env, "tinyfish_api_key", "") or ""
+        aimlapi_key = getattr(self.env, "aimlapi_api_key", "") or ""
         backends = []
         if serper_key:
             backends.append(lambda: self._search_serper(query, serper_key))
         if tinyfish_key:
             backends.append(lambda: self._search_tinyfish(query, tinyfish_key))
+        if aimlapi_key:
+            backends.append(lambda: self._search_aimlapi(query, aimlapi_key))
         backends.extend([
             lambda: self._search_duckduckgo(query),
             lambda: self._search_bing(query),
@@ -498,6 +503,26 @@ class Scout:
             snippet = item.get("snippet", "") or ""
             if url:
                 results.append((url, snippet))
+        return results[:MAX_RESULTS_PER_QUERY]
+
+    async def _search_aimlapi(self, query: str, api_key: str) -> list[tuple[str, str]]:
+        """Search via the AI/ML API Toolbox web/search tool (paid per search).
+
+        Not through ``_fetch``: that follows redirects, and the key must only
+        ever reach tools.aimlapi.com.
+        """
+        try:
+            async with public_http_client(timeout=HTTP_TIMEOUT) as client:
+                data = await aimlapi_web_search(client, api_key, query, MAX_RESULTS_PER_QUERY)
+        except Exception as e:
+            logger.debug(f"AI/ML API search failed: {e}")
+            return []
+        results = []
+        for item in aimlapi_results(data):
+            url = item.get("url", "") or ""
+            snippet = item.get("snippet", "") or ""
+            if isinstance(url, str) and url:
+                results.append((url, snippet if isinstance(snippet, str) else ""))
         return results[:MAX_RESULTS_PER_QUERY]
 
     async def _search_duckduckgo(self, query: str) -> list[tuple[str, str]]:

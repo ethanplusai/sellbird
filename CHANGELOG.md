@@ -7,6 +7,15 @@ minor versions can still change behaviour.
 
 ## [Unreleased]
 
+- **AI/ML API as a discovery source.** `sellbird discover --provider aimlapi`
+  (or *AI/ML API* on the Discover tab) finds businesses by phrase through the
+  AI/ML API Toolbox web search, on an `AIMLAPI_API_KEY` paid per search
+  ($0.0013 a result, $0.0091 minimum). It runs the startup and hiring
+  presets, returns up to 20 results a phrase and records no search rank.
+  Scout also searches through it when the key is set, after Serper and
+  TinyFish. The key is only sent to `tools.aimlapi.com`, and redirects are
+  not followed. OpenStreetMap stays the default.
+
 ## [0.5.0] - 2026-11-24
 
 **Your sales team, inside your agent.** Sellbird now lives where you already
