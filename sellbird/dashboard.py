@@ -3971,11 +3971,14 @@ async def get_live_status():
 
     prospects = await query_db("SELECT id, email, email_status, status FROM prospects")
     with_email = [p for p in prospects if p.get("email")]
+    # Someone marked not relevant or opted out is never checked or written
+    # to again; counting them would hold these steps short of 100% forever.
+    live = [p for p in with_email if (p.get("status") or "") not in ("lost", "opted_out")]
     by_status: dict[str, int] = {}
-    for p in with_email:
+    for p in live:
         k = (p.get("email_status") or "guess").lower()
         by_status[k] = by_status.get(k, 0) + 1
-    deliverable = {p["id"] for p in with_email
+    deliverable = {p["id"] for p in live
                    if (p.get("email_status") or "") in ("verified", "risky")}
     unconfirmed = sum(n for k, n in by_status.items()
                       if k not in ("verified", "risky", "invalid"))
@@ -4061,7 +4064,7 @@ async def get_live_status():
         step("Read their websites", profiled, with_site, reading, read_detail),
         step("Find emails", checked, profiled, finding_emails,
              f"{checked} of {profiled} checked · {len(with_email)} emails found"),
-        step("Check emails are real", len(with_email) - unconfirmed, len(with_email), False,
+        step("Check emails are real", len(live) - unconfirmed, len(live), False,
              f"{by_status.get('verified', 0)} verified · {by_status.get('risky', 0)} risky · "
              f"{unconfirmed} not confirmed"
              + (f" · {by_status['invalid']} bad" if by_status.get("invalid") else "")),
