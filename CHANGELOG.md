@@ -7,6 +7,25 @@ minor versions can still change behaviour.
 
 ## [Unreleased]
 
+### Added
+
+- **Today shows whether Sellbird is running, waiting or off, stage by stage.**
+  "Collector runs" listed past runs that only ever said "completed", so a
+  loop waiting for its next cycle looked finished. The Pipeline card now
+  opens with the loop's state: Running now (and what it's doing), Waiting
+  (why, and the next run with a countdown) or Off (with a Start button and
+  the `sellbird run` command). Below it each stage (finding businesses,
+  reading websites, finding and checking emails, writing, waiting for
+  approval, sending) shows its status, last run, next run, what's waiting,
+  what it did today and today's errors. `sellbird run` notes its phase and
+  each job's outcome in the settings table for this (`sellbird/loop_status.py`);
+  a failed note never stops the loop. New endpoint: `GET /api/pipeline-status`.
+- **Discover opens with summary tiles.** What's searching now (including a
+  `sellbird discover` started in a terminal) and how many it has found, the
+  last run (when, which source, how many, how it ended), businesses found
+  today and in total, and, for TinyFish, searches left this hour and when the
+  allowance resets. New endpoint: `GET /api/discover/summary`.
+
 ## [0.5.0] - 2026-11-24
 
 **Your sales team, inside your agent.** Sellbird now lives where you already
