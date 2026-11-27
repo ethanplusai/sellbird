@@ -26,7 +26,7 @@ from sellbird.email_style import style_problems, tidy
 from sellbird.humanize import humanize, humanizer_enabled
 from sellbird.integrations.instantly import InstantlyClient
 from sellbird.integrations.mail_provider import (
-    NATIVE_PROVIDERS, get_mail_provider, strip_quoted_reply,
+    NATIVE_PROVIDERS, clean_reply_text, get_mail_provider, strip_quoted_reply,
 )
 from sellbird.models.conversation import Conversation, Message
 from sellbird.send_window import recipient_zone
@@ -847,6 +847,9 @@ class Handler:
         reply_meta: dict | None = None,
     ):
         """Classify, record, and respond to a single reply."""
+        # Whatever the provider handed over, read it as text: HTML becomes
+        # its words and "&nbsp;" a space, before anything stores or answers it.
+        reply_text = clean_reply_text(reply_text)
         # Find the prospect by email (indexed lookup)
         prospect = await self.state.get_prospect_by_email(lead_email)
         if not prospect:

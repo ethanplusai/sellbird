@@ -29,6 +29,8 @@ from sellbird.integrations.mail_provider import (
     MailIdentity,
     MailProvider,
     SendResult,
+    clean_reply_text,
+    html_to_text,
     identity_from_config,
     looks_like_bounce,
 )
@@ -189,8 +191,8 @@ class SmtpImapProvider(MailProvider):
             if part is not None:
                 body = part.get_content()
                 if part.get_content_type() == "text/html":
-                    import re
-                    body = re.sub(r"<[^>]+>", " ", body)
+                    body = html_to_text(body)
+                body = clean_reply_text(body)
         except Exception:
             pass
 

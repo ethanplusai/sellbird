@@ -102,12 +102,22 @@ _TIDY = str.maketrans({
 })
 
 
+# A non-breaking space a model copied from an HTML email as markup.
+_NBSP_RE = re.compile(r"&(?:nbsp|#160|#x0*a0);", re.IGNORECASE)
+
+
+# HTML a model copied from an email: an entity, or a tag a reader would see.
+_MARKUP_RE = re.compile(
+    r"&(?:#[0-9]{1,7}|#[xX][0-9a-fA-F]{1,6}|[A-Za-z][A-Za-z0-9]{1,31});"
+    r"|</?(?:br|p|div|span|strong|em|html|body)\b[^>]*>", re.IGNORECASE)
+
+
 def tidy(text: str) -> str:
     """Straight quotes, plain spaces and "..." for what a model types fancy.
 
     Changes nothing a reader would call a different word, so it never needs
     a model call or a review."""
-    text = (text or "").translate(_TIDY).replace("…", "...")
+    text = _NBSP_RE.sub(" ", (text or "")).translate(_TIDY).replace("…", "...")
     return "\n".join(line.rstrip() for line in text.split("\n")).strip()
 
 
@@ -163,6 +173,8 @@ def style_problems(subject: str, body: str, *, kind: str = "cold", step: int = 1
         reasons.append("has an exclamation mark")
     if _LIST_LINE_RE.search(body) or _MARKDOWN_RE.search(text):
         reasons.append("has formatting (a list, bold or a heading); write plain sentences")
+    if _MARKUP_RE.search(text):
+        reasons.append("has HTML code in it (like &amp; or <br>); write plain text")
 
     hits = [phrase for phrase, rx in _TELL_RES if rx.search(lowered)]
     if _NOT_ONLY_BUT_RE.search(lowered):
