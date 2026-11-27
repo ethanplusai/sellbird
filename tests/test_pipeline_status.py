@@ -157,7 +157,7 @@ def test_a_loop_days_past_its_wake_up_is_not_responding():
     assert "5 days" in view["reason"] and "start it again" in view["reason"]
 
 
-# ── /api/pipeline ──
+# ── /api/pipeline-status ──
 
 
 def _stage(data, key):
@@ -165,7 +165,7 @@ def _stage(data, key):
 
 
 def test_pipeline_when_the_loop_is_off(client, env):
-    data = client.get("/api/pipeline").json()
+    data = client.get("/api/pipeline-status").json()
     assert data["scheduler"]["state"] == "off"
     assert [s["key"] for s in data["stages"]] == [
         "find", "read", "emails", "verify", "write", "approve", "send"]
@@ -188,7 +188,7 @@ def test_pipeline_waiting_shows_the_next_run_on_each_stage(client, env, monkeypa
         "phase": "sleeping", "since": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "next_at": nxt, "interval_minutes": 15})
     _company(env, "a", "a.test")            # one site not read yet
-    data = client.get("/api/pipeline").json()
+    data = client.get("/api/pipeline-status").json()
     assert data["scheduler"]["state"] == "waiting" and data["scheduler"]["next_at"] == nxt
     read = _stage(data, "read")
     assert read["state"] == "scheduled" and read["next"] == nxt and read["waiting"] == 1
@@ -200,7 +200,7 @@ def test_pipeline_counts_what_waits_for_approval(client, env):
     for oid in ("o1", "o2"):
         _sql(env, "INSERT INTO outbox (id, prospect_id, to_email, subject, body, status, kind, step) "
                   "VALUES (?, 'p', 'pat@example.com', 's', 'b', 'pending_review', 'sequence', 1)", (oid,))
-    approve = _stage(client.get("/api/pipeline").json(), "approve")
+    approve = _stage(client.get("/api/pipeline-status").json(), "approve")
     assert approve["state"] == "your_turn" and approve["waiting"] == 2
 
 
@@ -210,7 +210,7 @@ def test_a_job_that_failed_today_shows_its_error(client, env, monkeypatch):
     state = StateManager(db_path=str(env["db"]))
     with pytest.raises(RuntimeError):
         asyncio.run(ls.timed(state, "write_campaign", _boom()))
-    write = _stage(client.get("/api/pipeline").json(), "write")
+    write = _stage(client.get("/api/pipeline-status").json(), "write")
     assert write["last_result"] == "error" and "site timed out" in write["last_note"]
     assert write["errors_today"] == 1
 
