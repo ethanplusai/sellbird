@@ -1067,6 +1067,7 @@ class OpenStreetMap(DiscoveryProvider):
     # `python scripts/diagnose_overpass.py --coverage <url>` before adding it;
     # independence at the DNS level is not enough.
     ENDPOINTS = (
+        "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
         "https://overpass-api.de/api/interpreter",
         "https://overpass.kumi.systems/api/interpreter",
     )
@@ -1116,6 +1117,11 @@ class OpenStreetMap(DiscoveryProvider):
         "panader": ['shop=bakery'],
         "clinica": ['amenity=clinic'],
         "clínica": ['amenity=clinic'],
+        "abogad": ['office=lawyer'],
+        "inmobiliar": ['office=estate_agent'],
+        "restaurant": ['amenity=restaurant'],
+        "cafeter": ['amenity=cafe'],
+        "hotel": ['tourism=hotel', 'tourism=hostel', 'tourism=guest_house'],
     }
 
     def _tags(self, term: str) -> list[str]:
