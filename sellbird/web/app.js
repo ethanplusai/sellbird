@@ -1479,25 +1479,26 @@ function renderCohortBuilder() {
 
   if (!confirmed.length) {
     el.innerHTML = '<p class="muted" style="font-size:13px">' +
-      'Confirm some signals above and they become the building blocks here.</p>';
+      'Confirm some signals above and you can filter companies by them here.</p>';
     document.getElementById('cohort-result').innerHTML = '';
     return;
   }
 
-  const col = (title, key, hint) =>
-    '<div><div class="subhead" style="margin-top:0">' + title +
-      ' <span class="muted" style="font-weight:400;text-transform:none;letter-spacing:0">' +
-      hint + '</span></div><div class="cohort-grid">' +
-    confirmed.map(s =>
-      '<label class="cohort-pick"><input type="checkbox" ' +
-        (_cohort[key].has(s.code) ? 'checked ' : '') +
-        'onchange="toggleCohort(\'' + key + '\',' + jsq(s.code) + ',this.checked)">' +
-        '<span>' + escHtml(s.label || s.code) + '</span>' +
-        '<span class="n">' + (s.companies || 0) + '</span></label>'
-    ).join('') + '</div></div>';
+  // One row per signal: Any, Must have or Must not have. A signal can't be
+  // both, so one control per signal instead of the same list twice.
+  const choice = code => _cohort.require.has(code) ? 'require'
+    : _cohort.exclude.has(code) ? 'exclude' : 'any';
+  const seg = s => {
+    const on = choice(s.code);
+    const btn = (key, label) =>
+      '<button type="button" class="' + (on === key ? 'on' : '') + '" aria-pressed="' +
+        (on === key) + '" onclick="setCohortChoice(' + jsq(s.code) + ',' + jsq(key) + ')">' +
+        label + '</button>';
+    return '<div class="segmented" role="group" aria-label="' + escHtml(s.label || s.code) + '">' +
+      btn('any', 'Any') + btn('require', 'Must have') + btn('exclude', 'Must not have') + '</div>';
+  };
 
-  // Numeric signals (ranks, ratings) take a range: "organic rank 11-30".
-  const numeric = confirmed.filter(s => s.value_type === 'num');
+  // Numeric signals (ranks, ratings) also take a range: "organic rank 11 to 30".
   const bound = (code, side) => {
     const v = (_cohort.ranges[code] || {})[side];
     return '<input type="number" class="cohort-bound" placeholder="' + side + '" ' +
@@ -1505,19 +1506,37 @@ function renderCohortBuilder() {
       'aria-label="' + escHtml(code) + ' ' + side + '" ' +
       'onchange="setCohortRange(' + jsq(code) + ',' + jsq(side) + ',this.value)">';
   };
-  const rangeCol = numeric.length ?
-    '<div style="height:18px"></div><div><div class="subhead" style="margin-top:0">In range ' +
-      '<span class="muted" style="font-weight:400;text-transform:none;letter-spacing:0">' +
-      'for example organic rank 11 to 30; leave a side blank for no limit</span></div>' +
-      '<div class="cohort-grid">' +
-      numeric.map(s =>
-        '<div class="cohort-pick cohort-range"><span>' + escHtml(s.label || s.code) + '</span>' +
-          bound(s.code, 'min') + '<span class="muted">to</span>' + bound(s.code, 'max') + '</div>'
-      ).join('') + '</div></div>' : '';
+  const range = s => s.value_type !== 'num' ? '' :
+    '<div class="cohort-between"><span class="muted">Only between</span>' +
+      bound(s.code, 'min') + '<span class="muted">and</span>' + bound(s.code, 'max') + '</div>';
 
-  el.innerHTML = col('Must have', 'require', 'every company in the cohort carries all of these') +
-    '<div style="height:18px"></div>' +
-    col('Must not have', 'exclude', 'disqualifiers') + rangeCol;
+  const row = s => {
+    const n = s.companies || 0;
+    const on = choice(s.code);
+    const cls = on !== 'any' ? ' is-' + on : (_cohort.ranges[s.code] ? ' is-require' : '');
+    return '<div class="cohort-row' + cls + '">' +
+      '<div class="cohort-name"><span>' + escHtml(s.label || s.code) + '</span>' +
+        '<span class="n">' + n + (n === 1 ? ' company has' : ' companies have') + ' it</span></div>' +
+      seg(s) + range(s) + '</div>';
+  };
+
+  el.innerHTML = '<div class="cohort-rows">' + confirmed.map(row).join('') + '</div>';
+}
+
+function setCohortChoice(code, key) {
+  _cohort.require.delete(code);
+  _cohort.exclude.delete(code);
+  if (key === 'require' || key === 'exclude') _cohort[key].add(code);
+  _cohortOffset = 0;  // a new filter starts on its first page
+  runCohort();
+  renderCohortBuilder();
+}
+
+function clearCohort() {
+  _cohort = { require: new Set(), exclude: new Set(), ranges: {} };
+  _cohortOffset = 0;
+  runCohort();
+  renderCohortBuilder();
 }
 
 function setCohortRange(code, side, value) {
@@ -1530,13 +1549,7 @@ function setCohortRange(code, side, value) {
 }
 
 function toggleCohort(key, code, on) {
-  if (on) _cohort[key].add(code); else _cohort[key].delete(code);
-  // A company can't be both required and excluded on the same signal.
-  const other = key === 'require' ? 'exclude' : 'require';
-  if (on) _cohort[other].delete(code);
-  _cohortOffset = 0;  // a new cohort starts on its first page
-  runCohort();
-  renderCohortBuilder();
+  setCohortChoice(code, on ? key : 'any');
 }
 
 async function runCohort() {
@@ -1546,9 +1559,20 @@ async function runCohort() {
   if (!el) return;
   const require = [..._cohort.require], exclude = [..._cohort.exclude];
   const ranges = _cohortRanges();
-  if (!require.length && !ranges.length) { el.innerHTML = ''; return; }
+  if (!require.length && !ranges.length) {
+    // The server never treats "nothing required" as "every company", so say
+    // what's missing instead of showing nothing.
+    el.innerHTML = '<div class="cohort-result-box"><p class="muted" style="font-size:13px;margin:0">' +
+      (exclude.length
+        ? 'Set at least one signal to <b>Must have</b>, or give a range, to start the list. ' +
+          '<b>Must not have</b> only drops companies from it.'
+        : 'Set a signal to <b>Must have</b> to see the companies that match.') +
+      '</p>' + (exclude.length ? '<button class="btn btn-secondary btn-sm" style="margin-top:10px" ' +
+        'onclick="clearCohort()">Clear filters</button>' : '') + '</div>';
+    return;
+  }
   // Remove the prior export button as soon as its criteria become stale.
-  el.innerHTML = '<p class="muted">Loading cohort…</p>';
+  el.innerHTML = '<p class="muted">Loading matches…</p>';
 
   const data = await api('/api/cohort', {
     method: 'POST',
@@ -1562,10 +1586,14 @@ async function runCohort() {
     return;
   }
 
-  let html = '<div style="border-top:1px solid var(--border);margin-top:20px;padding-top:20px">' +
-    '<div class="cohort-size">' + data.size + '</div>' +
-    '<div class="muted" style="font-size:13px;margin-top:2px">compan' +
-      (data.size === 1 ? 'y matches' : 'ies match') + ' this cohort right now</div>';
+  let html = '<div class="cohort-result-box">' +
+    '<div style="display:flex;align-items:flex-start;gap:12px">' +
+      '<div style="flex:1"><div class="cohort-size">' + data.size + '</div>' +
+      '<div class="muted" style="font-size:13px;margin-top:2px">compan' +
+        (data.size === 1 ? 'y matches' : 'ies match') + ' right now</div>' +
+      '<div class="cohort-summary">' + _cohortSummary() + '</div></div>' +
+      '<button class="btn btn-secondary btn-sm" onclick="clearCohort()">Clear filters</button>' +
+    '</div>';
 
   if (data.companies && data.companies.length) {
     html += '<div class="table-card" style="margin-top:16px"><table><thead><tr>' +
@@ -1591,14 +1619,33 @@ async function runCohort() {
       '</div>';
   } else if (data.size === 0) {
     html += '<p class="muted" style="font-size:13px;margin-top:12px">' +
-      'No company carries all of those yet. Either loosen the cohort, or run ' +
-      'prospecting to collect more.</p>';
+      'No company matches all of those yet. Remove a filter, or run Discover ' +
+      'to find more companies.</p>';
   } else if (_cohortOffset > 0) {
     // The cohort shrank under us (a re-profile, a delete): back to page one.
     _cohortOffset = 0;
     return runCohort();
   }
   el.innerHTML = html + '</div>';
+}
+
+// The filter in words: "Has X and Y. Doesn't have Z. Organic rank 11 to 30."
+function _cohortSummary() {
+  const label = code => {
+    const groups = typeof _signals !== 'undefined' && _signals ? _signals.groups || [] : [];
+    const s = groups.flatMap(g => g.signals)
+      .find(x => x.code === code);
+    return escHtml((s && (s.label || s.code)) || code);
+  };
+  const parts = [];
+  if (_cohort.require.size) parts.push('Has ' + [..._cohort.require].map(label).join(' and '));
+  if (_cohort.exclude.size) parts.push("Doesn't have " + [..._cohort.exclude].map(label).join(' or '));
+  for (const r of _cohortRanges()) {
+    const lo = r.min === null ? null : r.min, hi = r.max === null ? null : r.max;
+    parts.push(label(r.code) + ' ' + (lo !== null && hi !== null ? lo + ' to ' + hi
+      : lo !== null ? lo + ' or more' : hi + ' or less'));
+  }
+  return parts.join('. ') + (parts.length ? '.' : '');
 }
 
 function _cohortRanges() {

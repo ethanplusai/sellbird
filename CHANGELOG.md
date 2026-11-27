@@ -7,6 +7,16 @@ minor versions can still change behaviour.
 
 ## [Unreleased]
 
+### Added
+
+- **A clearer company filter on the Signals page.** The cohort builder is now
+  "Filter companies by signal": one row per confirmed signal with Any, Must
+  have and Must not have, instead of the same list twice. The result says the
+  filter back in words, has a Clear filters button, and says what to do when
+  only Must not have is picked (that alone used to show nothing). The intro
+  says plainly that it only filters companies already found and doesn't change
+  who gets emailed.
+
 ## [0.5.0] - 2026-11-24
 
 **Your sales team, inside your agent.** Sellbird now lives where you already

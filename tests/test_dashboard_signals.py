@@ -499,10 +499,12 @@ const page = (name, offset) => ({size: 100, offset, companies: [{name}]});
                               capture_output=True, check=True)
     data = json.loads(response.stdout)
     assert data['offsets'] == [0, 50, 50]
-    assert 'Loading cohort' in data['loading'] and 'Export CSV' not in data['loading']
+    assert 'Loading matches' in data['loading'] and 'Export CSV' not in data['loading']
     assert 'LATEST' in data['latest'] and 'STALE' not in data['latest']
     assert data['afterOld'] == data['latest']
-    assert data['cleared'] == data['afterClear'] == ''
+    # Cleared: no stale rows, just the prompt to pick a Must have.
+    assert data['cleared'] == data['afterClear']
+    assert 'STALE' not in data['cleared'] and 'Must have' in data['cleared']
 
 
 # ── Cohort ranges: "organic rank 11-30" ──
