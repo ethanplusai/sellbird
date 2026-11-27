@@ -7,6 +7,11 @@ minor versions can still change behaviour.
 
 ## [Unreleased]
 
+- **OpenStreetMap discovery understands Spanish trade names used in Spain:**
+  fontanería, instalaciones eléctricas, climatización, calefacción, aire
+  acondicionado, reformas, obras and construcción now map to the tags that
+  carry those businesses instead of returning nothing.
+
 ## [0.5.0] - 2026-11-24
 
 **Your sales team, inside your agent.** Sellbird now lives where you already

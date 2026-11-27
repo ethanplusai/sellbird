@@ -1116,6 +1116,14 @@ class OpenStreetMap(DiscoveryProvider):
         "panader": ['shop=bakery'],
         "clinica": ['amenity=clinic'],
         "clínica": ['amenity=clinic'],
+        "fontaner": ['craft=plumber'],
+        "eléctric": ['craft=electrician'],
+        "climatiz": ['craft=hvac'],
+        "calefacci": ['craft=hvac'],
+        "aire acondicionado": ['craft=hvac'],
+        "reforma": ['craft=builder', 'office=construction_company'],
+        "construcci": ['craft=builder', 'office=construction_company'],
+        "obras": ['craft=builder', 'office=construction_company'],
     }
 
     def _tags(self, term: str) -> list[str]:
