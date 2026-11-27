@@ -1,4 +1,4 @@
-"""Contacts tab filters: 'To write' holds only who the Writer can draft for
+"""People page email-status filter: 'To write' holds only who the Writer can draft for
 (a new contact with a verified or catch-all address), the same count the loop
 uses. A guessed or missing address is 'Need an email', a draft waiting in the
 Outbox is 'Drafted', and an invalid address is closed out.
@@ -33,15 +33,15 @@ def _ids(filter_key: str) -> list[str]:
         pytest.skip("node is not installed")
     source = APP_JS.read_text(encoding="utf-8")
     parts = []
-    for pattern in (r"^const CONTACT_FILTERS = \[.*?^\];\n",
+    for pattern in (r"^const CONTACT_STATUSES = \[.*?^\];\n",
                     r"^function writable\(.*?\n",
-                    r"^function contactMatches\(.*?^}\n"):
+                    r"^function contactStatusMatches\(.*?^}\n"):
         match = re.search(pattern, source, re.S | re.M)
         assert match, pattern
         parts.append(match.group(0))
     script = ("\n".join(parts) + f"\nconst people = {json.dumps(PEOPLE)};\n"
               f"process.stdout.write(JSON.stringify(people.filter(p => "
-              f"contactMatches(p, {json.dumps(filter_key)})).map(p => p.id)));")
+              f"contactStatusMatches(p, {json.dumps(filter_key)})).map(p => p.id)));")
     out = subprocess.run([node, "-e", script], capture_output=True, text=True,
                          encoding="utf-8", check=True, timeout=30).stdout
     return json.loads(out)
