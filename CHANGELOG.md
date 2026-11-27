@@ -7,6 +7,17 @@ minor versions can still change behaviour.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A site's page count no longer comes from its sitemap index.** Most
+  WordPress SEO plugins serve `sitemap.xml` as an index of other sitemaps, and
+  Sellbird counted those as pages, so a 90-page site read as 2 and the Writer
+  told the business its site was tiny. Sellbird now follows the index to its
+  child sitemaps on the same site (up to 10) and counts their pages. When a
+  child can't be read it records no count, never a low one. Content freshness
+  comes from the pages' dates too. Profile a company again to replace an old
+  count.
+
 ## [0.5.0] - 2026-11-24
 
 **Your sales team, inside your agent.** Sellbird now lives where you already

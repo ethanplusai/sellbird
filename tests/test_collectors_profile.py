@@ -289,3 +289,91 @@ async def test_profile_uses_homepage_brand_over_service_location_title(
         await c.run([{"id": cid, "name": current, "domain": domain}])
     assert (await state.get_company_by_domain(domain)).name == brand
     assert (await state.get_prospect(pid)).company == brand
+
+
+# ── sitemap page count: a sitemap index is not a page list ──
+
+def _urlset(*paths, lastmod="2026-10-01"):
+    rows = "".join(f"<url><loc>https://acmeroofing.example.com{p}</loc>"
+                   f"<lastmod>{lastmod}</lastmod></url>" for p in paths)
+    return f'<?xml version="1.0"?><urlset>{rows}</urlset>'
+
+
+def _index(*children):
+    rows = "".join(f"<sitemap><loc>{c}</loc><lastmod>2026-11-20</lastmod></sitemap>"
+                   for c in children)
+    return f'<?xml version="1.0"?><sitemapindex>{rows}</sitemapindex>'
+
+
+SITE = "https://acmeroofing.example.com"
+
+
+async def _pages(files):
+    c = collector()
+
+    async def fake_get(url):
+        return files.get(url, "")
+    c._get = fake_get
+    return await c._sitemap_pages(SITE)
+
+
+@pytest.mark.asyncio
+async def test_flat_sitemap_counts_its_pages():
+    pages, dates = await _pages({f"{SITE}/sitemap.xml": _urlset("/", "/about/", "/contact/")})
+    assert pages == 3 and dates == ["2026-10-01"] * 3
+
+
+@pytest.mark.asyncio
+async def test_sitemap_index_counts_the_child_sitemaps_pages():
+    """Two child sitemaps holding 40 pages is a 40-page site, not a 2-page one."""
+    pages_xml = _urlset(*[f"/area-{i}/" for i in range(39)], "/", lastmod="2026-09-15")
+    files = {
+        f"{SITE}/sitemap.xml": _index(f"{SITE}/page-sitemap.xml", f"{SITE}/local-sitemap.xml"),
+        f"{SITE}/page-sitemap.xml": pages_xml,
+        f"{SITE}/local-sitemap.xml": _urlset("/locations.kml", lastmod="2026-01-01"),
+    }
+    pages, dates = await _pages(files)
+    assert pages == 40, "the map file is not a page; the index entries are not pages"
+    assert max(dates) == "2026-09-15" and "2026-11-20" not in dates, \
+        "freshness comes from the child sitemaps, not the index"
+
+
+@pytest.mark.asyncio
+async def test_sitemap_index_with_unreadable_child_records_no_count():
+    files = {
+        f"{SITE}/sitemap.xml": _index(f"{SITE}/page-sitemap.xml", f"{SITE}/post-sitemap.xml"),
+        f"{SITE}/page-sitemap.xml": _urlset("/"),
+    }
+    assert await _pages(files) == (None, [])
+
+
+@pytest.mark.asyncio
+async def test_sitemap_index_never_follows_another_host():
+    files = {
+        f"{SITE}/sitemap.xml": _index("https://cdn.example.net/sitemap-1.xml"),
+        "https://cdn.example.net/sitemap-1.xml": _urlset("/"),
+    }
+    assert await _pages(files) == (None, [])
+
+
+@pytest.mark.asyncio
+async def test_profile_records_index_page_count(state):
+    """End to end: the observation the Writer reads carries the real count."""
+    await seed_signal_catalog(state)
+    await state.set_signal_status("SITE_PAGE_COUNT", "confirmed")
+    c = collector(await state.confirmed_signal_codes())
+    c.state = state
+    files = {
+        SITE: "<html><title>Acme Roofing</title></html>",
+        f"{SITE}/sitemap.xml": _index(f"{SITE}/page-sitemap.xml", f"{SITE}/post-sitemap.xml"),
+        f"{SITE}/page-sitemap.xml": _urlset(*[f"/p{i}/" for i in range(12)]),
+        f"{SITE}/post-sitemap.xml": _urlset(*[f"/blog/{i}/" for i in range(8)]),
+    }
+
+    async def fake_get(url):
+        return files.get(url.rstrip("/") if url.rstrip("/") == SITE else url, "")
+    c._get = fake_get
+    cid = await state.add_company(Company(name="Acme Roofing", domain="acmeroofing.example.com"))
+    obs = await c.profile_company(cid, "acmeroofing.example.com")
+    counts = [o["value_num"] for o in obs if o["signal_code"] == "SITE_PAGE_COUNT"]
+    assert counts == [20]
