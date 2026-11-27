@@ -32,6 +32,21 @@ from sellbird.collectors.discover import (
 logger = logging.getLogger("sellbird.collectors.profile")
 
 TIMEOUT = httpx.Timeout(connect=8.0, read=12.0, write=8.0, pool=8.0)
+
+# A sitemap index is followed to at most this many child sitemaps (a request
+# each). Past it the count is a lower bound, which only ever understates a
+# large site, never invents a small one.
+SITEMAP_CHILDREN_MAX = 10
+_SITEMAP_INDEX = re.compile(r"(?i)<sitemapindex\b")
+_LOC = re.compile(r"<loc>\s*([^<]+?)\s*</loc>")
+_LASTMOD = re.compile(r"<lastmod>\s*(\d{4}-\d{2}-\d{2})")
+# Map files some local-SEO plugins list beside the pages (locations.kml).
+_NOT_A_PAGE = re.compile(r"(?i)\.(?:kml|kmz|xml)(?:\?|$)")
+
+
+def _page_locs(sitemap: str) -> list[str]:
+    """The page URLs a (non-index) sitemap lists."""
+    return [u for u in _LOC.findall(sitemap) if not _NOT_A_PAGE.search(u)]
 USER_AGENTS = [
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -910,6 +925,38 @@ class ProfileCollector:
                 break       # every variant lands on the same challenge
         return "", ""
 
+    async def _sitemap_pages(self, site: str) -> tuple[int | None, list[str]]:
+        """(pages listed, their <lastmod> dates) from the site's sitemap.xml.
+
+        Most WordPress SEO plugins (Yoast, Rank Math) and many site builders
+        serve sitemap.xml as a sitemap INDEX: each <loc> there is another
+        sitemap, not a page. Counting those reported a 90-page site as 2
+        pages, so an index is followed to its child sitemaps on the same site.
+        (None, []) when there is no sitemap or a child can't be read: no count
+        is better than a low one the Writer turns into "your site is tiny".
+        """
+        sm = await self._get(f"{site}/sitemap.xml")
+        if not sm:
+            return None, []
+        if not _SITEMAP_INDEX.search(sm):
+            return len(_page_locs(sm)), _LASTMOD.findall(sm)
+        host = (urlparse(site).hostname or "").lower().removeprefix("www.")
+        children = [u.strip() for u in _LOC.findall(sm)]
+        if not children:
+            return None, []
+        pages, dates = 0, []
+        for child in children[:SITEMAP_CHILDREN_MAX]:
+            parsed = urlparse(html_unescape(child))
+            if (parsed.scheme not in ("http", "https")
+                    or (parsed.hostname or "").lower().removeprefix("www.") != host):
+                return None, []
+            text = await self._get(parsed.geturl())
+            if not text or _SITEMAP_INDEX.search(text):
+                return None, []          # unreadable, or nested deeper than we follow
+            pages += len(_page_locs(text))
+            dates += _LASTMOD.findall(text)
+        return pages, dates
+
     async def _first_present(self, site: str, paths) -> tuple[str, str]:
         """Return (url, html) for the first path that returns content."""
         for path in paths:
@@ -1254,13 +1301,11 @@ class ProfileCollector:
 
         # sitemap.xml → size + content freshness
         if self.wants("SITE_PAGE_COUNT") or self.wants("BLOG_STALE"):
-            sm = await self._get(f"{site}/sitemap.xml")
-            if sm:
-                locs = re.findall(r"<loc>\s*([^<]+)\s*</loc>", sm)
-                if self.wants("SITE_PAGE_COUNT") and locs:
-                    add("SITE_PAGE_COUNT", num=len(locs), url=f"{site}/sitemap.xml")
+            pages, dates = await self._sitemap_pages(site)
+            if pages is not None:
+                if self.wants("SITE_PAGE_COUNT") and pages:
+                    add("SITE_PAGE_COUNT", num=pages, url=f"{site}/sitemap.xml")
                 if self.wants("BLOG_STALE"):
-                    dates = re.findall(r"<lastmod>\s*(\d{4}-\d{2}-\d{2})", sm)
                     if dates:
                         newest = max(dates)
                         try:
