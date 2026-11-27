@@ -23,7 +23,8 @@ from sellbird.email_style import (
 from sellbird.humanize import humanize, humanizer_enabled
 from sellbird.integrations.mail_provider import NATIVE_PROVIDERS
 from sellbird.models.campaign import Campaign, EmailStep
-from sellbird.state import WRITABLE_EMAIL_STATUSES, StateManager
+from sellbird.gate import sendable_email_statuses, undeliverable_reason
+from sellbird.state import StateManager
 from sellbird.sending_mode import sync_sending_mode
 from sellbird.site_facts import site_facts
 from sellbird.startups import startup_facts
@@ -252,22 +253,31 @@ class Writer:
             logger.info("Writer: No new prospects to write for.")
             return
 
-        # Only write for prospects we can actually deliver to. Guessed and
-        # invalid addresses are skipped so we don't spend Claude calls (or
-        # sending reputation) on mail that will bounce.
+        # Only write for prospects the Sender will send to: the same rule as
+        # its staging and the pre-send gate (verified, plus catch-all when
+        # channels.email.send_to_risky is on). Anyone else stays 'new', so no
+        # Claude call is spent on a draft nobody can approve, and a later
+        # verification, or turning send_to_risky on, picks them up.
+        writable = sendable_email_statuses(self._allow_risky())
         prospects_with_email = [
             p for p in new_prospects
-            if p.email and (p.email_status or "guess") in WRITABLE_EMAIL_STATUSES
+            if p.email and (p.email_status or "guess") in writable
         ]
+        if not self._allow_risky():
+            held = sum(1 for p in new_prospects
+                       if p.email and (p.email_status or "") == "risky")
+            if held:
+                logger.info(
+                    f"Writer: not writing for {held} prospect(s) with a catch-all "
+                    "(risky) email: channels.email.send_to_risky is off."
+                )
         # Someone at their company already replied: no cold email to write.
         prospects_with_email = [
             p for p in prospects_with_email
             if not await self.state.colleague_who_replied(p.id)
         ]
         if not prospects_with_email:
-            logger.info(
-                "Writer: No prospects with deliverable (verified/risky) emails yet."
-            )
+            logger.info("Writer: No prospects with a deliverable email yet.")
             return
 
         # channels.email.min_write_score: a prospect scored below it stays
@@ -369,6 +379,10 @@ class Writer:
                 f"{len(sequence)} emails for {len(prospects)} prospects."
             )
 
+    def _allow_risky(self) -> bool:
+        """channels.email.send_to_risky, or False when the config has none."""
+        return bool(getattr(self.config.channels.email, "send_to_risky", False))
+
     def _min_write_score(self) -> int:
         """channels.email.min_write_score, or 0 when the config has none."""
         email = getattr(getattr(self.config, "channels", None), "email", None)
@@ -454,7 +468,14 @@ class Writer:
         provider = self.config.channels.email.provider
 
         pending = []
+        allow_risky = self._allow_risky()
         for prospect in prospects:
+            # Last check before a Claude call: a draft the pre-send gate
+            # would refuse is never written, so the Outbox never asks for it.
+            why = undeliverable_reason(prospect.email_status, allow_risky)
+            if why:
+                logger.info(f"Writer: no draft for {prospect.email}: {why}.")
+                continue
             try:
                 draft = await self._write_personal_email(prospect)
             except Exception as e:

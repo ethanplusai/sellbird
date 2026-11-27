@@ -7,6 +7,22 @@ minor versions can still change behaviour.
 
 ## [Unreleased]
 
+### Fixed
+
+- **No more approving emails Sellbird's own gate refuses.** The Writer drafted
+  a personal first email for every prospect with a verified or catch-all
+  ("risky") address and put it in the Outbox, while the pre-send gate refuses a
+  catch-all unless `channels.email.send_to_risky` is on. You approved the
+  draft, and fifteen minutes later it failed with "email_status 'risky' is not
+  deliverable". Now one rule decides who is written for, staged and sent to:
+  a prospect the gate would refuse gets no draft and no Claude call, stays
+  `new`, is not counted as writable by the heartbeat, and is written for once
+  the address is verified or `send_to_risky` is turned on. Drafts already
+  waiting for approval that the gate would refuse are withdrawn on the next
+  cycle with the reason ("withdrawn before approval: email_status 'risky' is
+  not deliverable") under Didn't send, and the person goes back to `new`.
+  `sellbird status` says which addresses count as ready to write for.
+
 ## [0.5.0] - 2026-11-24
 
 **Your sales team, inside your agent.** Sellbird now lives where you already

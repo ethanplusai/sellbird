@@ -224,7 +224,19 @@ def cmd_status(args):
     async def _status():
         state = StateManager()
         await state.init_db()
-        summary = await state.get_state_summary()
+        from sellbird.config import compliance_notice, load_config, sending_notice
+        loaded = None
+        try:
+            loaded = load_config()
+            notice = sending_notice(loaded)
+            address_notice = compliance_notice(loaded)
+        except Exception:
+            # Status must still print when sellbird.yaml is broken; that's
+            # when people run it. The --check path reports config errors.
+            notice = address_notice = ""
+        allow_risky = bool(getattr(getattr(getattr(loaded, "channels", None), "email", None),
+                                   "send_to_risky", False))
+        summary = await state.get_state_summary(allow_risky)
 
         print("\n  Sellbird Pipeline Status")
         print("  " + "=" * 40)
@@ -233,7 +245,8 @@ def cmd_status(args):
         detail = ", ".join(f"{status} {n}" for status, n in sorted(by_status.items()) if n)
         print(f"  Prospects:            {total}" + (f" ({detail})" if detail else ""))
         print(f"  Ready to write for:   {summary.get('writable_prospects', 0)} "
-              "(new, with a verified or catch-all email)")
+              + ("(new, with a verified or catch-all email)" if allow_risky
+                 else "(new, with a verified email)"))
         write_failed = (summary.get("prospects") or {}).get("write_failed", 0)
         if write_failed:
             print(f"  Couldn't write for:   {write_failed} (the model's drafts kept coming back "
@@ -248,16 +261,6 @@ def cmd_status(args):
         by_provider = summary.get("usage_today_by_provider", {})
         print(f"  Claude calls today:   {by_provider.get('claude', summary['usage_today'])}")
         print(f"  Codex calls today:    {by_provider.get('codex', 0)}")
-        from sellbird.config import compliance_notice, load_config, sending_notice
-        loaded = None
-        try:
-            loaded = load_config()
-            notice = sending_notice(loaded)
-            address_notice = compliance_notice(loaded)
-        except Exception:
-            # Status must still print when sellbird.yaml is broken; that's
-            # when people run it. The --check path reports config errors.
-            notice = address_notice = ""
         from sellbird.main import unusable_backlog_notice
         backlog = unusable_backlog_notice(summary)
         if backlog:
