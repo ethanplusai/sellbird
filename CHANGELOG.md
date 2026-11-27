@@ -7,6 +7,19 @@ minor versions can still change behaviour.
 
 ## [Unreleased]
 
+### Added
+
+- **The Outbox filters by email in the series, website platform and ads.**
+  A long review queue mixed first emails, follow-ups and replies to every kind
+  of business. A bar above the drafts now narrows them to Email 1, 2, 3 or
+  Replies, to one platform or tool the site runs (WordPress, Shopify, Google
+  Analytics and the rest of `TECH_STACK`), and to whether the company runs
+  Google or Meta ads, with a count on every choice. It can also order the
+  queue by email in the series. Filters only change what's shown: Approve all
+  still covers every draft waiting. Platform and ads choices appear once those
+  signals are collected; "No ads found" means checked and none seen, not never
+  checked. Meta ads now show next to a draft too.
+
 ## [0.5.0] - 2026-11-24
 
 **Your sales team, inside your agent.** Sellbird now lives where you already
