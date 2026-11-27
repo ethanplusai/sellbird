@@ -7,6 +7,18 @@ minor versions can still change behaviour.
 
 ## [Unreleased]
 
+### Added
+
+- **Companies: search, a status filter and sortable columns; People: a sort
+  order.** Companies gets a search box (name, website, industry, location)
+  and a status filter with counts, every column header sorts (a second click
+  reverses it), and long names, locations and industries are cut with the
+  whole text on hover so the table fits a laptop screen. People gets an order
+  select beside the search (newest, oldest, name, company, email, status).
+  Both pages now load every row (Companies stopped at 2,000, People at the
+  newest 200), so filters and counts cover everything, and Companies sends
+  only the columns it shows.
+
 ## [0.5.0] - 2026-11-24
 
 **Your sales team, inside your agent.** Sellbird now lives where you already

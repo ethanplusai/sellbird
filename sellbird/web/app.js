@@ -2525,6 +2525,49 @@ async function sendingToggle(action) {
 const COMPANIES_PER_PAGE = 50;
 let _companiesPage = 0;
 
+// ── Sortable columns (Companies, Contacts) ──
+// One sort per table: {key, dir}, dir 1 ascending, -1 descending. A header
+// click sorts by that column; clicking it again flips the order.
+const _tableSort = {companies: {key: 'fit', dir: -1}, contacts: {key: 'added', dir: -1}};
+const _tableRender = {companies: () => renderCompaniesPage(0), contacts: () => renderContacts()};
+
+function setTableSort(table, key, firstDir) {
+  const s = _tableSort[table];
+  _tableSort[table] = s.key === key ? {key, dir: -s.dir} : {key, dir: firstDir || 1};
+  _tableRender[table]();
+}
+
+function sortTh(table, key, label, opts) {
+  opts = opts || {};
+  const s = _tableSort[table];
+  const on = s.key === key;
+  const arrow = on ? (s.dir > 0 ? '▲' : '▼') : '';
+  return '<th class="sortable' + (opts.num ? ' num' : '') + '"' +
+    (opts.title ? ' title="' + escHtml(opts.title) + '"' : '') +
+    ' aria-sort="' + (on ? (s.dir > 0 ? 'ascending' : 'descending') : 'none') + '">' +
+    '<button type="button" onclick="setTableSort(\'' + table + '\', \'' + key + '\', ' + (opts.firstDir || 1) + ')">' +
+    label + '<span class="sort-arrow" aria-hidden="true">' + arrow + '</span></button></th>';
+}
+
+// Sort [row, index] pairs by a value function; blanks always last, ties keep order.
+function sortPairs(pairs, value, dir) {
+  return pairs.map((pair, n) => [pair, value(pair[0]), n]).sort((a, b) => {
+    const x = a[1], y = b[1];
+    const blankX = x === '' || x === null || x === undefined;
+    const blankY = y === '' || y === null || y === undefined;
+    if (blankX !== blankY) return blankX ? 1 : -1;
+    if (!blankX && x !== y) {
+      const c = (typeof x === 'number' && typeof y === 'number') ? x - y
+        : String(x).localeCompare(String(y), undefined, {numeric: true, sensitivity: 'base'});
+      if (c) return c * dir;
+    }
+    return a[2] - b[2];
+  }).map(t => t[0]);
+}
+
+// Companies: search, a status filter and sort, all over every company.
+let _companyQuery = '', _companyStatus = '';
+
 async function loadCompanies() {
   companyDrill = false;
   const el = document.getElementById('companies-list');
@@ -2537,35 +2580,86 @@ async function loadCompanies() {
       'OpenStreetMap is free and needs no account.');
     return;
   }
+  if (!document.getElementById('company-rows')) {
+    el.innerHTML = '<div class="toolbar">' +
+      '<label class="search">' + icon('discover') +
+        '<input class="form-input" id="company-search" type="search" placeholder="Search" autocomplete="off" ' +
+        'aria-label="Search companies by name, website, industry or location" ' +
+        'oninput="_companyQuery=this.value;renderCompaniesPage(0)"></label>' +
+      '<select class="form-input company-filter" id="company-status" aria-label="Filter by status" ' +
+        'onchange="_companyStatus=this.value;renderCompaniesPage(0)"></select>' +
+      '</div><div id="company-rows"></div>';
+    document.getElementById('company-search').value = _companyQuery;
+  }
   renderCompaniesPage(_companiesPage);
 }
 
+function companyMatches(c, q) {
+  if (_companyStatus && (c.register_status || '') !== _companyStatus) return false;
+  return !q || [c.name, c.domain, c.industry, c.location].join(' ').toLowerCase().includes(q);
+}
+
+const COMPANY_SORT = {
+  name: c => (c.name || c.domain || '').toLowerCase(),
+  fit: c => c.fit || 0,
+  status: c => c.register_status || '',
+  industry: c => (c.industry || '').toLowerCase(),
+  location: c => (c.location || '').toLowerCase(),
+  contacts: c => c.contact_count || 0,
+  added: c => c.created_at || '',
+};
+
+function renderCompanyFilters(q) {
+  const statusEl = document.getElementById('company-status');
+  if (!statusEl) return;
+  const statuses = [...new Set(_companies.map(c => c.register_status || '').filter(Boolean))].sort();
+  const n = pred => _companies.filter(c => pred(c) &&
+    (!q || [c.name, c.domain, c.industry, c.location].join(' ').toLowerCase().includes(q))).length;
+  statusEl.innerHTML = '<option value="">Any status</option>' + statuses.map(st =>
+    '<option value="' + escHtml(st) + '"' + (st === _companyStatus ? ' selected' : '') + '>' + escHtml(st) +
+    ' (' + n(c => (c.register_status || '') === st) + ')</option>').join('');
+}
+
 function renderCompaniesPage(page) {
-  const el = document.getElementById('companies-list');
-  const data = _companies;
+  const el = document.getElementById('company-rows');
+  if (!el) return;
+  const q = _companyQuery.trim().toLowerCase();
+  renderCompanyFilters(q);
+  const s = _tableSort.companies;
+  const data = sortPairs(_companies.map((c, i) => [c, i]).filter(([c]) => companyMatches(c, q)),
+                         COMPANY_SORT[s.key] || COMPANY_SORT.fit, s.dir);
+  if (!data.length) {
+    el.innerHTML = '<div class="table-card">' + emptyState(icon('discover'), 'No matches',
+      'Nothing matches that search and filter.') + '</div>';
+    return;
+  }
   const pages = Math.max(1, Math.ceil(data.length / COMPANIES_PER_PAGE));
   _companiesPage = Math.min(Math.max(0, page), pages - 1);
   const start = _companiesPage * COMPANIES_PER_PAGE;
-  let html = '<div class="table-card"><table class="nowrap"><thead><tr><th>Company</th>' +
-    '<th title="Company fit, 0-100: sector, decision maker, reachability, buying signal. Hover a score for why.">Fit</th>' +
-    '<th title="Hover a status for why the company was or wasn\'t contacted">Status</th>' +
-    '<th>Industry</th><th>Location</th><th class="num">Contacts</th><th>Added</th></tr></thead><tbody>';
-  data.slice(start, start + COMPANIES_PER_PAGE).forEach((c, j) => {
-    const i = start + j;
+  const fitTitle = 'Company fit, 0-100: sector, decision maker, reachability, buying signal. ' +
+    'Hover a score for why.';
+  let html = '<div class="table-card"><table class="nowrap companies-table"><thead><tr>' +
+    sortTh('companies', 'name', 'Company') +
+    sortTh('companies', 'fit', 'Fit', {firstDir: -1, title: fitTitle}) +
+    sortTh('companies', 'status', 'Status', {title: 'Hover a status for why the company was or wasn\'t contacted'}) +
+    sortTh('companies', 'industry', 'Industry') + sortTh('companies', 'location', 'Location') +
+    sortTh('companies', 'contacts', 'Contacts', {num: true, firstDir: -1}) +
+    sortTh('companies', 'added', 'Added', {firstDir: -1}) + '</tr></thead><tbody>';
+  data.slice(start, start + COMPANIES_PER_PAGE).forEach(([c, i]) => {
     const website = c.website || (c.domain ? 'https://' + c.domain : '');
     const domain = safeHref(website)
       ? '<a href="' + safeHref(website) + '" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">' +
         escHtml(c.domain || website.replace(/^https?:\/\//i, '')) + '</a>'
       : escHtml(c.domain);
     html += '<tr class="rowlink">' +
-      '<td><div class="cell-stack"><span class="cell-main"><a class="rowmain" href="#companies" onclick="showCompanyContacts(' + i +
+      '<td><div class="cell-stack"><span class="cell-main clip" title="' + escHtml(c.name) + '"><a class="rowmain" href="#companies" onclick="showCompanyContacts(' + i +
         ');return false">' + escHtml(c.name || c.domain || 'Unnamed') + '</a></span>' +
-        '<span class="cell-sub">' + domain + '</span></div></td>' +
+        '<span class="cell-sub clip">' + domain + '</span></div></td>' +
       '<td title="' + escHtml((c.fit_reasons || []).join(' · ')) + '">' +
         (typeof c.fit === 'number' ? meterHtml(c.fit) : '') + '</td>' +
       '<td title="' + escHtml(c.register_why || '') + '">' + escHtml(c.register_status || '') + '</td>' +
-      '<td>' + (c.industry ? '<span class="tag">' + escHtml(c.industry) + '</span>' : '') + '</td>' +
-      '<td>' + escHtml(c.location) + '</td>' +
+      '<td>' + (c.industry ? '<span class="tag" title="' + escHtml(c.industry) + '">' + escHtml(c.industry) + '</span>' : '') + '</td>' +
+      '<td><span class="clip" title="' + escHtml(c.location) + '">' + escHtml(c.location) + '</span></td>' +
       '<td class="num">' + (c.contact_count || 0) + '</td>' +
       '<td class="muted">' + relTime(c.created_at) + '</td></tr>';
   });
@@ -2578,7 +2672,9 @@ function renderCompaniesPage(page) {
     : '';
   el.innerHTML = html + '</tbody></table></div>' +
     '<div class="table-foot">' + (start + 1) + '–' + Math.min(start + COMPANIES_PER_PAGE, data.length) +
-    ' of ' + data.length + ' compan' + (data.length === 1 ? 'y' : 'ies') + pager + '</div>';
+    ' of ' + data.length.toLocaleString() + ' compan' + (data.length === 1 ? 'y' : 'ies') +
+    (data.length !== _companies.length ? ' matching (' + _companies.length.toLocaleString() + ' in all)' : '') +
+    pager + '</div>';
 }
 
 // Basic facts about one company, above its contacts: where it came from,
@@ -2726,6 +2822,7 @@ async function loadProspects() {
       '<label class="search">' + icon('discover') +
         '<input class="form-input" id="contact-search" type="search" placeholder="Search name, company, email" ' +
         'aria-label="Search people" oninput="_contactQuery=this.value;renderContacts()"></label>' +
+      '<select class="form-input" id="contact-sort" aria-label="Order of the list" onchange="setContactSort(this.value)"></select>' +
       '<div class="chips" id="contact-sources" role="group" aria-label="Filter by source"></div>' +
       '</div><div id="contact-rows"></div>';
     // A rebuild after an offline blip must show the search still applied.
@@ -2825,6 +2922,26 @@ function contactRow(p, i) {
 
 const CONTACTS_SHOWN = 200;   // rows drawn at once; search narrows the rest
 
+// People is a list of rows, not a table, so its order is a select.
+const CONTACT_SORT_OPTIONS = [
+  ['added:-1', 'Newest first'], ['added:1', 'Oldest first'], ['name:1', 'Name A to Z'],
+  ['company:1', 'Company A to Z'], ['email:1', 'Email A to Z'], ['status:1', 'Status'],
+];
+function setContactSort(v) {
+  const [key, dir] = String(v).split(':');
+  if (!own(CONTACT_SORT, key)) return;
+  _tableSort.contacts = {key, dir: Number(dir) || 1};
+  renderContacts();
+}
+
+const CONTACT_SORT = {
+  name: p => ((p.first_name || '') + ' ' + (p.last_name || '')).trim().toLowerCase(),
+  company: p => (p.company || '').toLowerCase(),
+  email: p => (p.email || '').toLowerCase(),
+  status: p => statusMeta(p.status).label,
+  added: p => p.created_at || '',
+};
+
 function renderContacts() {
   const rowsEl = document.getElementById('contact-rows');
   const filtersEl = document.getElementById('contact-filters');
@@ -2845,7 +2962,13 @@ function renderContacts() {
       '" onclick="setContactSource(' + jsq(s[0]) + ')">' + escHtml(s[1]) + ' <b>' +
       _prospects.filter(p => (s[0] === 'all' || sourceOf(p) === s[0]) && found(p)).length + '</b></button>').join('');
 
-  const rows = _prospects.map((p, i) => [p, i]).filter(([p]) => contactMatches(p, _contactFilter) && found(p) && inSource(p));
+  const s = _tableSort.contacts;
+  const sortEl = document.getElementById('contact-sort');
+  if (sortEl) sortEl.innerHTML = CONTACT_SORT_OPTIONS.map(([v, label]) =>
+    '<option value="' + v + '"' + (v === s.key + ':' + s.dir ? ' selected' : '') + '>' + label + '</option>').join('');
+  const rows = sortPairs(_prospects.map((p, i) => [p, i])
+    .filter(([p]) => contactMatches(p, _contactFilter) && found(p) && inSource(p)),
+    CONTACT_SORT[s.key] || CONTACT_SORT.added, s.dir);
   if (!rows.length) {
     rowsEl.innerHTML = '<div class="w">' + emptyState(icon('discover'), 'No matches',
       'Nothing matches that search and filter.') + '</div>';

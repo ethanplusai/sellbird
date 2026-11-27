@@ -255,7 +255,7 @@ def build_server(client_factory: Callable[[], CoreClient] = default_client, *,
 
     @server.tool()
     async def prospects_list() -> dict:
-        """The newest prospects (up to 200) with their status and email verification."""
+        """Every prospect, newest first, with their status and email verification."""
         return await read("/api/prospects")
 
     @server.tool()
