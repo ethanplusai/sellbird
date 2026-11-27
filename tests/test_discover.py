@@ -1199,6 +1199,21 @@ async def test_osm_maps_the_trades_it_does_know():
 
 
 @pytest.mark.asyncio
+async def test_osm_maps_spanish_trade_terms():
+    provider = D.OpenStreetMap()
+    assert provider._tags("empresa de fontanería") == ["craft=plumber"]
+    assert provider._tags("fontanero") == ["craft=plumber"]
+    assert provider._tags("instalaciones eléctricas") == ["craft=electrician"]
+    assert provider._tags("electricista") == ["craft=electrician"]
+    assert provider._tags("climatización") == ["craft=hvac"]
+    assert provider._tags("instalador de calefacción") == ["craft=hvac"]
+    assert provider._tags("aire acondicionado") == ["craft=hvac"]
+    builder = ["craft=builder", "office=construction_company"]
+    assert provider._tags("reformas y obras") == builder
+    assert provider._tags("empresa de construcción") == builder
+
+
+@pytest.mark.asyncio
 async def test_an_unmappable_term_is_reported_not_silently_skipped(
         state, config, register, monkeypatch):
     """The run must surface why a query produced nothing."""
