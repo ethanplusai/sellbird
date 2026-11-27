@@ -1022,6 +1022,123 @@ class TinyFish(DiscoveryProvider):
         return out
 
 
+AIMLAPI_TOOLS_HOST = "tools.aimlapi.com"
+AIMLAPI_TOOLS_RUN = f"https://{AIMLAPI_TOOLS_HOST}/v1/tools/run"
+
+
+async def aimlapi_web_search(client: httpx.AsyncClient, api_key: str, query: str,
+                             max_results: int = 10) -> dict:
+    """One run of the AI/ML API Toolbox ``web/search`` tool; the run envelope.
+
+    The key goes to tools.aimlapi.com and nowhere else: the URL is fixed, its
+    host is checked before sending, and redirects are not followed, so a 3xx
+    can't carry the key to another host. Raises ProviderExhausted on a bad
+    key or an empty balance, RuntimeError on anything else unusable.
+    """
+    if urlparse(AIMLAPI_TOOLS_RUN).hostname != AIMLAPI_TOOLS_HOST:
+        raise RuntimeError("AI/ML API: refusing to send the key to another host")
+    try:
+        r = await client.post(
+            AIMLAPI_TOOLS_RUN,
+            headers={"Authorization": f"Bearer {api_key}",
+                     "Content-Type": "application/json",
+                     "Accept": "application/json"},
+            json={"tool": "web/search",
+                  "input": {"query": query, "max_results": max(1, min(max_results, 20))}},
+            follow_redirects=False,
+        )
+    except httpx.HTTPError as e:
+        raise RuntimeError(f"AI/ML API search unreachable: {e}") from e
+    if r.is_redirect:
+        raise RuntimeError(f"AI/ML API answered with a redirect (HTTP {r.status_code}); not followed")
+    if r.status_code in (401, 403):
+        raise ProviderExhausted(
+            f"AI/ML API refused the key (HTTP {r.status_code}). Check AIMLAPI_API_KEY in "
+            ".env or create one at https://aimlapi.com/app/keys")
+    if r.status_code == 402:
+        raise ProviderExhausted("AI/ML API: the account balance is used up (HTTP 402).")
+    if r.status_code == 429:
+        raise ProviderExhausted("AI/ML API: rate limited (HTTP 429). Try again later.")
+    r.raise_for_status()
+    try:
+        data = r.json()
+    except ValueError as e:
+        raise RuntimeError("AI/ML API sent an unexpected answer (not JSON)") from e
+    if not isinstance(data, dict):
+        raise RuntimeError("AI/ML API sent an unexpected answer (not an object)")
+    if data.get("is_error") or data.get("status") not in (None, "completed"):
+        raise RuntimeError(f"AI/ML API search did not complete ({data.get('status')})")
+    return data
+
+
+def aimlapi_results(data: dict) -> list[dict]:
+    """The ``results`` list of a web/search run, skipping malformed items."""
+    output = data.get("output") if isinstance(data, dict) else None
+    items = output.get("results") if isinstance(output, dict) else None
+    return [i for i in items or [] if isinstance(i, dict)]
+
+
+class AIMLAPISearch(DiscoveryProvider):
+    """Web search through the AI/ML API Toolbox (tools.aimlapi.com), paid per
+    run from an AI/ML API balance. Like TinyFish, its ordering is not a
+    Google position from a point, so it records no search rank.
+    """
+    key = "aimlapi"
+    label = "AI/ML API"
+    kind = "serp"
+    rank_codes = ()
+    blurb = ("Web search on an AI/ML API key, paid per search from your balance. "
+             "Finds businesses by phrase; it records no search rank.")
+    cost_note = "$0.0013 per result, $0.0091 minimum per search"
+    free_tier = "none: pay as you go from an AI/ML API balance"
+    signup_url = "https://aimlapi.com/app/keys"
+    env_keys = ("aimlapi_api_key",)
+    caveat = ("Needs AIMLAPI_API_KEY in .env. Returns at most 20 results per phrase. "
+              "No SERP_RANK: use Serper or DataForSEO SERP for rank signals.")
+
+    MAX_RESULTS = 20
+    PRICE_PER_RESULT = 0.0013
+    MIN_PRICE = 0.0091
+
+    def _search_cost(self, results: int) -> float:
+        return max(self.MIN_PRICE, self.PRICE_PER_RESULT * results)
+
+    def estimate(self, queries: list[DiscoveryQuery]) -> float:
+        return sum(self._search_cost(min(q.depth, self.MAX_RESULTS)) for q in queries)
+
+    async def fetch(self, client: httpx.AsyncClient, env: dict,
+                    query: DiscoveryQuery) -> list[Business]:
+        api_key = (env.get("aimlapi_api_key") or "").strip()
+        if not api_key:
+            raise RuntimeError("AI/ML API needs AIMLAPI_API_KEY in .env")
+        keyword = query.keyword()
+        data = await aimlapi_web_search(client, api_key, keyword,
+                                        min(query.depth, self.MAX_RESULTS))
+        cost = data.get("cost")
+        if isinstance(cost, dict) and isinstance(cost.get("actual_usd"), (int, float)):
+            self.last_cost = float(cost["actual_usd"])
+        out = []
+        for item in aimlapi_results(data):
+            url = item.get("url") or ""
+            domain = normalize_domain(url) if isinstance(url, str) else ""
+            if not domain:
+                continue
+            title = item.get("title") or ""
+            out.append(Business(
+                name=business_name(title, domain),
+                raw_title=title,
+                domain=domain,
+                website=url,
+                location=query.location,
+                rank=None,
+                has_website=True,
+                source_url=url,
+                provider=self.key,
+                keyword=keyword,
+            ))
+        return out
+
+
 class OpenStreetMap(DiscoveryProvider):
     """Genuinely free, no account, no key. Honest about what that costs you.
 
@@ -1470,6 +1587,7 @@ PROVIDERS: dict[str, DiscoveryProvider] = {
         Serper(),
         ScavioMaps(),
         ScavioSearch(),
+        AIMLAPISearch(),
     )
 }
 

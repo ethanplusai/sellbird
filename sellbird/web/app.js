@@ -350,6 +350,7 @@ const SOURCE_LABELS = {
   job_board: 'Job board', web_search: 'Web search', company_inbox: 'Company inbox',
   osm: 'OpenStreetMap', dataforseo_listings: 'DataForSEO', dataforseo_serp: 'DataForSEO SERP', dataforseo_maps: 'DataForSEO Maps',
   serper: 'Serper', tinyfish: 'TinyFish', scavio_maps: 'Scavio Maps', scavio_search: 'Scavio Search',
+  aimlapi: 'AI/ML API',
 };
 function sourceLabel(s) {
   if (!s) return '';
