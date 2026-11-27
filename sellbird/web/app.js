@@ -955,7 +955,11 @@ async function loadFunnel() {
   const total = (data.prospects || {}).total || 0;
   const pipe = data.pipeline || {};
   const stages = [
+    // Only 'To write' is the Writer's queue; a guessed address waits for the
+    // verifier first, and a draft waits for you in the Outbox.
+    ['Need an email', pipe.need_email || 0, 'c-faint'],
     ['To write', pipe.to_write || 0, 'c-accent-soft'],
+    ['Drafted', pipe.drafted || 0, 'c-wait'],
     ['Contacted', pipe.contacted || 0, 'c-accent'],
     ['Replied', pipe.replied || 0, 'c-active'],
     ['Interested', pipe.interested || 0, 'c-good'],
@@ -2698,6 +2702,20 @@ function sourceName(key) {
   return own(names, key) || String(key || '').replace(/_/g, ' ').replace(/^./, c => c.toUpperCase());
 }
 
+// Email status, beside the stage: only 'To write' is the Writer's queue; a
+// guessed address waits for the verifier first, and a draft waits for you in
+// the Outbox.
+let _contactStatus = 'all';
+const CONTACT_STATUSES = [
+  ['all', 'Any email status', null],
+  ['email', 'Need an email', p => p.status === 'new' && !writable(p) && p.email_status !== 'invalid'],
+  ['todo', 'To write', p => p.status === 'new' && writable(p)],
+  ['drafted', 'Drafted', ['queued']],
+  ['contacted', 'Contacted', ['contacted']],
+  ['replied', 'Replied', ['replied', 'interested', 'meeting']],
+  ['closed', 'Closed out', null],
+];
+
 async function loadProspects() {
   const el = document.getElementById('prospects-table');
   const [data, pipe] = await Promise.all([api('/api/prospects'), api('/api/pipeline')]);
@@ -2726,6 +2744,7 @@ async function loadProspects() {
       '<label class="search">' + icon('discover') +
         '<input class="form-input" id="contact-search" type="search" placeholder="Search name, company, email" ' +
         'aria-label="Search people" oninput="_contactQuery=this.value;renderContacts()"></label>' +
+      '<select class="form-input" id="contact-status" aria-label="Filter by email status" onchange="_contactStatus=this.value;renderContacts()"></select>' +
       '<div class="chips" id="contact-sources" role="group" aria-label="Filter by source"></div>' +
       '</div><div id="contact-rows"></div>';
     // A rebuild after an offline blip must show the search still applied.
@@ -2747,6 +2766,19 @@ async function lookingFor() {
 
 function contactMatches(p, f) {
   return f === 'all' || stageOf(p) === f;
+}
+
+// The Writer drafts only for a verified or catch-all address (state.py
+// WRITABLE_EMAIL_STATUSES).
+function writable(p) { return !!p.email && ['verified', 'risky'].includes(p.email_status); }
+
+function contactStatusMatches(p, f) {
+  const known = ['new', 'queued', 'contacted', 'replied', 'interested', 'meeting'];
+  if (f === 'all') return true;
+  if (f === 'closed') return !known.includes(p.status) || (p.status === 'new' && p.email_status === 'invalid');
+  const hit = CONTACT_STATUSES.find(x => x[0] === f);
+  if (!hit || !hit[2]) return false;
+  return typeof hit[2] === 'function' ? hit[2](p) : hit[2].includes(p.status);
 }
 
 function setContactFilter(f) { _contactFilter = f; renderContacts(); }
@@ -2845,7 +2877,14 @@ function renderContacts() {
       '" onclick="setContactSource(' + jsq(s[0]) + ')">' + escHtml(s[1]) + ' <b>' +
       _prospects.filter(p => (s[0] === 'all' || sourceOf(p) === s[0]) && found(p)).length + '</b></button>').join('');
 
-  const rows = _prospects.map((p, i) => [p, i]).filter(([p]) => contactMatches(p, _contactFilter) && found(p) && inSource(p));
+  const inStatus = p => contactStatusMatches(p, _contactStatus);
+  const statusEl = document.getElementById('contact-status');
+  if (statusEl) statusEl.innerHTML = CONTACT_STATUSES.map(([k, label]) =>
+    '<option value="' + k + '"' + (k === _contactStatus ? ' selected' : '') + '>' + escHtml(label) +
+      (k === 'all' ? '' : ' (' + _prospects.filter(p => contactStatusMatches(p, k) && found(p) && inSource(p) &&
+        contactMatches(p, _contactFilter)).length + ')') + '</option>').join('');
+  const rows = _prospects.map((p, i) => [p, i])
+    .filter(([p]) => contactMatches(p, _contactFilter) && found(p) && inSource(p) && inStatus(p));
   if (!rows.length) {
     rowsEl.innerHTML = '<div class="w">' + emptyState(icon('discover'), 'No matches',
       'Nothing matches that search and filter.') + '</div>';

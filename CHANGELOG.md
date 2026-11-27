@@ -7,6 +7,19 @@ minor versions can still change behaviour.
 
 ## [Unreleased]
 
+### Changed
+
+- **"To write" counts only who the Writer can write to.** The pipeline counts
+  (`/api/stats`, which your agent also reads) put every new and drafted
+  contact under To write, so they could show hundreds waiting while the loop
+  logged "none ready to write for". They are now split by what each contact
+  is waiting on: **Need an email** (a guessed or missing address, waiting for
+  the verifier), **To write** (a verified or catch-all address with no draft
+  yet, the loop's own rule) and **Drafted** (waiting in the Outbox). A new
+  contact with an invalid address, or whose company already replied, counts
+  as closed out. People gets an email-status filter beside the search with
+  the same groups and counts.
+
 ## [0.5.0] - 2026-11-24
 
 **Your sales team, inside your agent.** Sellbird now lives where you already
