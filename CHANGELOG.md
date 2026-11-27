@@ -7,6 +7,28 @@ minor versions can still change behaviour.
 
 ## [Unreleased]
 
+### Added
+
+- **A broken email verifier shows up, and guessed emails get a second
+  check.** A verifier that rejected its key, ran out of credits or kept timing
+  out looked the same as one that found nothing: every new address stayed a
+  guess that is never sent, and nothing said why. Each verifier's last result
+  is now saved every cycle. `sellbird status` prints an "Email verifier" line
+  (ok, failing since when and why, or none set) and how many guessed emails
+  are waiting, and the Today tab raises it when the verifier is failing. The
+  day's pause on prospecting names the broken verifier. While a verifier works,
+  each cycle re-checks up to 10 guessed emails (best score first) and moves
+  them to verified, risky or invalid; Reoon's free balance call caps the batch
+  at the credits left and notices when they're back. An inconclusive one waits
+  14 days before another try. A failed verifier is tried again after an hour.
+
+### Fixed
+
+- **Verifier checks on slow mail servers are no longer thrown away.** The
+  verifiers waited 20 seconds for an answer, but checking a slow recipient
+  server takes 30 seconds or more, so those checks (and their credits) were
+  lost. They now wait up to 60 seconds.
+
 ## [0.5.0] - 2026-11-24
 
 **Your sales team, inside your agent.** Sellbird now lives where you already
