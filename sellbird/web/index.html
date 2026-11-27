@@ -81,6 +81,8 @@
   <div class="brand-tools">
     <button type="button" class="tool-btn" onclick="loadCurrentTab()" title="Refresh this page" aria-label="Refresh this page"><svg class="icon" aria-hidden="true"><use href="#i-refresh"/></svg></button>
   </div>
+  <button type="button" class="engine discovery-status" id="header-discovery"
+          onclick="goTab('discover')" style="display:none"></button>
 </header>
 
 <main class="content">
@@ -355,10 +357,11 @@
   <div class="section-head">
     <div>
       <h1 tabindex="-1">Find businesses</h1>
-      <p>Find businesses matching your ICP. Pick a source, see what it will cost,
-         then run it. Nothing is called until you press the button.</p>
+      <p>Find businesses matching your ICP. Run a search by hand below (pick a source,
+         see what it will cost, press Run), or let automatic discovery top up the list.</p>
     </div>
   </div>
+  <div id="discover-auto"></div>
   <div id="discover-profile"></div>
 
   <div class="subhead">Source</div>
