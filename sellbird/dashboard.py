@@ -2766,6 +2766,17 @@ async def _with_context(items: list[dict]) -> list[dict]:
     return items
 
 
+async def _with_waits(state, items: list[dict]) -> list[dict]:
+    """Mark a follow-up whose earlier email hasn't gone out: its planned time
+    means nothing yet, since it goes a set gap after that email is sent."""
+    for item in items:
+        if item.get("kind") == "sequence" and int(item.get("step") or 1) > 1:
+            prev = await state.get_previous_step(item)
+            if prev is not None and prev["status"] in ("pending_review", "approved", "sending"):
+                item["waits_for_step"] = prev["step"]
+    return items
+
+
 @app.get("/api/outbox")
 async def get_outbox_api():
     """Outbox queue + kill-switch state for the Outbox tab."""
@@ -2784,8 +2795,8 @@ async def get_outbox_api():
             "pending_total": int((await query_db(
                 "SELECT COUNT(*) AS n FROM outbox WHERE status = 'pending_review'"))[0]["n"]),
             # Mail going out right now leads the list.
-            "approved": (await state.get_outbox(status="sending", limit=10)
-                         + await state.get_outbox(status="approved", limit=50)),
+            "approved": await _with_waits(state, await state.get_outbox(status="sending", limit=10)
+                                          + await state.get_outbox(status="approved", limit=50)),
             "sent": (await query_db(
                 "SELECT * FROM outbox WHERE status = 'sent' "
                 "ORDER BY sent_at DESC LIMIT 25")),
