@@ -7,6 +7,14 @@ minor versions can still change behaviour.
 
 ## [Unreleased]
 
+### Changed
+
+- **Conversations is a compact list, like an inbox.** Each conversation is one
+  row: who, their company, the latest message on one line, its status and how
+  long ago. Click a row (or press Enter) to open the whole thread in place;
+  arrow keys or j and k move between rows and Escape closes it. "Needs you" is
+  now "Needs reply", and a waiting draft shows as "Draft to review".
+
 ## [0.5.0] - 2026-11-24
 
 **Your sales team, inside your agent.** Sellbird now lives where you already

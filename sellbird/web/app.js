@@ -3117,13 +3117,13 @@ async function loadCampaigns() {
 
 // The whole exchange in order: Sellbird's cold emails (from the Outbox), the
 // replies, Sellbird's answers, and any answer still waiting for approval.
-let _convos = [], _convoFilter = 'needs';
+let _convos = [], _convoFilter = 'needs', _convoOpen = null;
 const STAGE_LABELS = {
   initial_outreach: 'Outreach', engaged: 'Engaged', qualifying: 'Qualifying', presenting: 'Presenting',
   negotiating: 'Negotiating', closing: 'Closing', closed_won: 'Won', closed_lost: 'Lost',
 };
 const CONVO_FILTERS = [
-  ['needs', 'Needs you', c => !!c.draft || c.status === 'needs_human'],
+  ['needs', 'Needs reply', c => !!c.draft || c.status === 'needs_human'],
   ['open', 'Open', c => c.status !== 'closed' && c.status !== 'awaiting_reply'],
   ['awaiting', 'Awaiting reply', c => c.status === 'awaiting_reply'],
   ['closed', 'Closed', c => c.status === 'closed'],
@@ -3140,7 +3140,7 @@ async function loadConversations() {
       'No prospects have replied so far. When they do, the Handler agent classifies each reply and responds. Every thread shows up here.');
     return;
   }
-  // Open on "Needs you" only when something needs you.
+  // Open on "Needs reply" only when something needs a reply.
   if (_convoFilter === 'needs' && !data.some(CONVO_FILTERS[0][2]))
     _convoFilter = data.some(CONVO_FILTERS[1][2]) ? 'open' : 'all';
   renderConversations();
@@ -3154,7 +3154,8 @@ function renderConversations() {
   const bar = '<div class="toolbar"><div class="chips" role="group" aria-label="Filter conversations">' +
     CONVO_FILTERS.map(f => '<button type="button" class="chip-btn' + (f[0] === filter[0] ? ' on' : '') + '" aria-pressed="' + (f[0] === filter[0]) +
       '" onclick="setConvoFilter(\'' + f[0] + '\')">' + f[1] + ' <b>' +
-      _convos.filter(f[2]).length + '</b></button>').join('') + '</div></div>';
+      _convos.filter(f[2]).length + '</b></button>').join('') + '</div>' +
+    '<span class="kbd-hint">' + kbd('↑') + kbd('↓') + ' to move, ' + kbd('Enter') + ' to open</span></div>';
   // Handed-to-you first, then drafts waiting; otherwise newest first (as served).
   const rank = c => c.status === 'needs_human' ? 0 : c.draft ? 1 : 2;
   const shown = _convos.filter(filter[2]).map((c, i) => [c, i])
@@ -3164,17 +3165,91 @@ function renderConversations() {
       'No conversation matches this filter.') + '</div>';
     return;
   }
-  el.innerHTML = bar + shown.map(convoCard).join('');
+  if (_convoOpen && !shown.some(c => c.id === _convoOpen)) _convoOpen = null;
+  el.innerHTML = bar + '<div class="convo-list" onkeydown="convoListKey(event)">' +
+    shown.map(convoRow).join('') + '</div>';
 }
 
-function convoCard(c) {
-  const items = (c.emails || []).map(e => ({ts: e.sent_at, email: e}))
+function kbd(k) { return '<kbd>' + k + '</kbd>'; }
+
+// Everything in a thread, oldest first: the emails Sellbird sent and the
+// messages either side wrote.
+function convoItems(c) {
+  return (c.emails || []).map(e => ({ts: e.sent_at, email: e}))
     .concat((c.thread || []).map(m => ({ts: m.timestamp, msg: m})))
     .map(it => ({...it, key: +parseTs(it.ts)}))
     // An item with no time goes last instead of scrambling the order.
     .sort((a, b) => (isNaN(a.key) ? Infinity : a.key) - (isNaN(b.key) ? Infinity : b.key) || 0);
+}
+
+// The row's one line: the latest message, who wrote it, and nothing else.
+function convoPreview(c) {
+  if (c.draft) return '<b>Draft reply:</b> ' + escHtml(oneLine(c.draft.body));
+  const last = convoItems(c).pop();
+  if (!last) return '<span class="muted">No messages yet</span>';
+  if (last.email) return '<b>You sent Email ' + escHtml(String(last.email.step)) + ':</b> ' + escHtml(oneLine(last.email.subject));
+  const theirs = last.msg.sender === 'prospect';  // 'harvey' (the old name) is ours too
+  return (theirs ? '' : '<b>Sellbird:</b> ') + escHtml(oneLine(last.msg.content));
+}
+
+function oneLine(t) { return String(t || '').replace(/\s+/g, ' ').trim().slice(0, 240); }
+
+function convoStatus(c) {
+  // A waiting draft is what you act on, so it outranks "Open".
+  if (c.draft && c.status !== 'needs_human') return '<span class="badge t-note">Draft to review</span>';
+  return badge(c.status);
+}
+
+function convoRow(c) {
+  const open = c.id === _convoOpen;
+  const needs = CONVO_FILTERS[0][2](c);
+  const name = [c.first_name, c.last_name].filter(Boolean).join(' ') || c.company || 'Unknown';
+  const panel = 'convo-' + String(c.id).replace(/[^A-Za-z0-9_-]/g, '_');
+  return '<div class="convo-item' + (open ? ' is-open' : '') + (needs ? ' needs' : '') + '">' +
+    '<button class="convo-row" aria-expanded="' + open + '" aria-controls="' + panel + '" data-id="' + escHtml(c.id) +
+      '" onclick="toggleConvo(' + jsq(c.id) + ')">' +
+      '<span class="avatar">' + initials(c.first_name, c.last_name) + '</span>' +
+      '<span class="convo-who"><span class="name">' + escHtml(name) + '</span>' +
+        (c.company && c.company !== name ? '<span class="co">' + escHtml(c.company) + '</span>' : '') + '</span>' +
+      '<span class="convo-preview">' + convoPreview(c) + '</span>' +
+      '<span class="convo-status">' + convoStatus(c) + '</span>' +
+      '<span class="convo-age">' + relTime(c.updated_at) + '</span>' +
+      icon('chevron', 'chev') +
+    '</button>' +
+    (open ? '<div class="convo-detail" id="' + panel + '">' + convoDetail(c) + '</div>' : '') +
+    '</div>';
+}
+
+function toggleConvo(id) {
+  _convoOpen = _convoOpen === id ? null : id;
+  renderConversations();
+  const row = document.querySelector('.convo-row[data-id="' + CSS.escape(id) + '"]');
+  if (row) {
+    row.focus({preventScroll: true});
+    row.scrollIntoView({block: 'nearest'});
+  }
+}
+
+// ↑/↓ (or j/k) move between rows, Home/End jump, Escape closes the open one.
+function convoListKey(e) {
+  const row = e.target.closest('.convo-row');
+  if (!row || e.altKey || e.ctrlKey || e.metaKey) return;
+  const rows = [...document.querySelectorAll('.convo-row')];
+  const i = rows.indexOf(row);
+  let next = null;
+  if (e.key === 'ArrowDown' || e.key === 'j') next = rows[i + 1];
+  else if (e.key === 'ArrowUp' || e.key === 'k') next = rows[i - 1];
+  else if (e.key === 'Home') next = rows[0];
+  else if (e.key === 'End') next = rows[rows.length - 1];
+  else if (e.key === 'Escape' && _convoOpen) { e.preventDefault(); toggleConvo(_convoOpen); return; }
+  else return;
+  e.preventDefault();
+  if (next) { next.focus(); next.scrollIntoView({block: 'nearest'}); }
+}
+
+function convoDetail(c) {
   const first = c.first_name || 'Them';
-  const thread = items.map(it => {
+  const thread = convoItems(c).map(it => {
     if (it.email) {
       return '<div class="thread-email"><div class="te-head">' + icon('campaigns') +
         '<b>Email ' + escHtml(String(it.email.step)) + '</b><span>' + escHtml(it.email.subject) + '</span>' +
@@ -3191,17 +3266,16 @@ function convoCard(c) {
       '<div class="td-body">' + escHtml(c.draft.body) + '</div>' +
       '<button class="btn btn-primary btn-sm" onclick="goTab(\'outbox\')">Review in Outbox' + icon('arrow') + '</button></div>'
     : '';
-  const name = [c.first_name, c.last_name].filter(Boolean).join(' ') || c.company || 'Unknown';
   const stage = own(STAGE_LABELS, c.stage) ? '<span class="tag">' + STAGE_LABELS[c.stage] + '</span>' : '';
-  return '<div class="convo-card"><div class="convo-head' + (c.prospect_id ? ' rowlink' : '') + '">' +
-    '<span class="avatar">' + initials(c.first_name, c.last_name) + '</span>' +
-    '<div><h3>' + personLink(c.prospect_id, escHtml(name)) + '</h3><div class="sub">' +
-      escHtml([c.company, c.prospect_email].filter(Boolean).join(' · ')) + ' · ' + relTime(c.updated_at) + '</div></div>' +
-    // An escalation's intent badge says the same as its status: show one.
-    '<div class="tags">' + (c.intent && !(c.status === 'needs_human' && c.intent === 'escalate') ? badge(c.intent) : '') +
-      stage + badge(c.status) + '</div></div>' +
+  // An escalation's intent badge says the same as its status: show one.
+  const intent = c.intent && !(c.status === 'needs_human' && c.intent === 'escalate') ? badge(c.intent) : '';
+  // The person's page is one click from the open thread.
+  return '<div class="convo-meta"><span>' + (c.prospect_id
+      ? personLink(c.prospect_id, escHtml(c.prospect_email || 'Their page'))
+      : escHtml(c.prospect_email || '')) + '</span>' +
+    (intent || stage ? '<span class="tags">' + intent + stage + '</span>' : '') + '</div>' +
     '<div class="thread">' + (thread || '<p class="muted" style="font-size:13px">No messages in this thread yet.</p>') +
-    draft + '</div>' + convoActions(c) + '</div>';
+    draft + '</div>' + convoActions(c);
 }
 
 // Sellbird answers new replies only on open conversations: an escalated one
