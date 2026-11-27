@@ -23,7 +23,10 @@ from sellbird.config import (
     compliance_of, live_do_not_contact, operator_timezone, send_window_of,
 )
 from sellbird import extensions
-from sellbird.gate import autopilot_review, do_not_contact_match, pre_send_check
+from sellbird.gate import (
+    DELIVERABLE_STATUSES, VERIFIED_ONLY, autopilot_review, do_not_contact_match,
+    pre_send_check, sendable_email_statuses, undeliverable_reason,
+)
 from sellbird.send_hooks import NO_HEADERS_HOLD, SendCheck, SendHookError, extra_headers, first_verdict
 from sellbird.send_window import in_window, next_send_time, recipient_country, recipient_zone
 from sellbird.integrations.instantly import InstantlyClient
@@ -77,9 +80,11 @@ SENDABLE_STATUSES = {"new", "queued"}
 
 # Email confidence levels safe to send to. "verified" only by default;
 # "risky" (catch-all domains) is opt-in via config. Never send to a "guess"
-# or "invalid" address — that bounces and burns the sending domain.
-SENDABLE_EMAIL_STATUSES = {"verified"}
-SENDABLE_EMAIL_STATUSES_WITH_RISKY = {"verified", "risky"}
+# or "invalid" address — that bounces and burns the sending domain. The rule
+# itself lives in sellbird.gate (sendable_email_statuses), shared with the
+# Writer and the pre-send gate; these names are kept for readers of this file.
+SENDABLE_EMAIL_STATUSES = VERIFIED_ONLY
+SENDABLE_EMAIL_STATUSES_WITH_RISKY = DELIVERABLE_STATUSES
 
 
 def _utcnow() -> datetime:
@@ -426,10 +431,6 @@ class Sender:
 
         # 3. Add leads — validated, deduped, never-contacted, deliverable-only
         allow_risky = getattr(self.config.channels.email, "send_to_risky", False)
-        sendable_email = (
-            SENDABLE_EMAIL_STATUSES_WITH_RISKY if allow_risky
-            else SENDABLE_EMAIL_STATUSES
-        )
         prospects = []
         seen_emails: set[str] = set()
         skipped_unverified = 0
@@ -456,12 +457,10 @@ class Sender:
                 continue
             # Deliverability gate: never send to unverified/guessed addresses —
             # bounces are the fastest way to torch a sending domain.
-            if (prospect.email_status or "guess") not in sendable_email:
+            why = undeliverable_reason(prospect.email_status, allow_risky)
+            if why:
                 skipped_unverified += 1
-                logger.debug(
-                    f"Sender: Skipping {email} (email_status "
-                    f"'{prospect.email_status or 'guess'}' not deliverable)."
-                )
+                logger.debug(f"Sender: Skipping {email} ({why}).")
                 continue
             seen_emails.add(email)
             prospects.append(prospect)
@@ -595,6 +594,19 @@ class Sender:
                 f"Sender: {stale} email(s) were interrupted mid-send and won't be "
                 "retried. Check your Sent folder; they're under Didn't send."
             )
+        # A draft waiting for approval that the pre-send gate would refuse
+        # (a catch-all or guessed address under the current rules) must not
+        # be offered for approval: it is withdrawn with the reason, and the
+        # person goes back to 'new' so a later verification, or turning
+        # channels.email.send_to_risky on, writes to them afresh.
+        allow_risky = getattr(self.config.channels.email, "send_to_risky", False)
+        withdrawn = await self.state.withdraw_undeliverable_drafts(
+            sendable_email_statuses(allow_risky))
+        if withdrawn:
+            logger.info(
+                f"Sender: withdrew {withdrawn} draft(s) waiting for approval whose "
+                "address isn't deliverable under your rules; they're under Didn't send."
+            )
         paused = await self.state.get_setting(KILL_SWITCH_KEY)
         if paused:
             logger.warning(
@@ -654,10 +666,6 @@ class Sender:
         )
         initial_status = "pending_review" if require_approval else "approved"
         allow_risky = getattr(self.config.channels.email, "send_to_risky", False)
-        sendable_email = (
-            SENDABLE_EMAIL_STATUSES_WITH_RISKY if allow_risky
-            else SENDABLE_EMAIL_STATUSES
-        )
 
         staged = 0
         skipped = 0
@@ -677,7 +685,10 @@ class Sender:
                 continue
             if await self.state.is_suppressed(email):  # never staged
                 continue
-            if (prospect.email_status or "guess") not in sendable_email:
+            # The pre-send gate would refuse it: nothing to approve. The
+            # Writer leaves such prospects 'new' now, so this catches only a
+            # status that changed since, and campaigns written before that.
+            if undeliverable_reason(prospect.email_status, allow_risky):
                 skipped += 1
                 continue
             if await self.state.colleague_who_replied(prospect.id):

@@ -11,7 +11,7 @@ upgrade cleanly in place.
 
 import json
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
 from contextlib import asynccontextmanager
 from datetime import datetime, date, timedelta, timezone
 from pathlib import Path
@@ -33,9 +33,15 @@ from sellbird import deals  # noqa: E402
 from sellbird import storage  # noqa: E402
 from sellbird.storage import BUSY_TIMEOUT_SECONDS  # noqa: E402,F401 (re-exported)
 
-# Email statuses the Writer drafts for. Shared with the heartbeat so it only
-# chooses write_campaign when there is something the Writer will act on.
+# Email statuses the Writer can ever draft for. Shared with the heartbeat so
+# it only chooses write_campaign when there is something the Writer will act
+# on. Whether a catch-all ("risky") address counts is channels.email.
+# send_to_risky: see gate.sendable_email_statuses.
 WRITABLE_EMAIL_STATUSES = ("verified", "risky")
+# Outbox error prefix on a draft withdrawn before approval because the
+# pre-send gate would refuse its address (a catch-all under rules that don't
+# send to one, or a guess). The reason follows, in the gate's words.
+WITHDRAWN_PREFIX = "withdrawn before approval: "
 # Settings key, per prospect: the user emailed them by hand from the
 # dashboard. Its value is the status they had before, so undo is exact; its
 # presence tells the Sender never to email them as well.
@@ -2289,6 +2295,50 @@ class StateManager:
             await db.commit()
             return cursor.rowcount
 
+    async def withdraw_undeliverable_drafts(self, sendable: Iterable[str]) -> int:
+        """Cancel every cold email waiting for approval whose recipient's
+        email_status is not in ``sendable`` (gate.sendable_email_statuses),
+        with the reason the gate would give, and return how many.
+
+        The pre-send gate would fail them after approval anyway, so the
+        Outbox stops asking. A person left with nothing staged, approved or
+        sent goes back to 'new': the Writer picks them up again once the
+        address is verified, or the rules change.
+        """
+        statuses = tuple(sendable)
+        marks = ",".join("?" for _ in statuses) or "''"
+        now = _utcnow().isoformat()
+        async with self._connect() as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                f"""SELECT o.id, o.prospect_id,
+                           COALESCE(NULLIF(p.email_status, ''), 'guess') AS email_status
+                    FROM outbox o JOIN prospects p ON p.id = o.prospect_id
+                    WHERE o.status = 'pending_review' AND o.kind = 'sequence'
+                      AND COALESCE(NULLIF(p.email_status, ''), 'guess') NOT IN ({marks})""",
+                statuses,
+            ) as cursor:
+                rows = [dict(r) for r in await cursor.fetchall()]
+            withdrawn = 0
+            for row in rows:
+                reason = f"{WITHDRAWN_PREFIX}email_status '{row['email_status']}' is not deliverable"
+                cursor = await db.execute(
+                    "UPDATE outbox SET status = 'cancelled', error = ?, updated_at = ? "
+                    "WHERE id = ? AND status = 'pending_review'",
+                    (reason[:300], now, row["id"]),
+                )
+                withdrawn += cursor.rowcount
+            for prospect_id in {r["prospect_id"] for r in rows}:
+                await db.execute(
+                    """UPDATE prospects SET status = 'new', updated_at = ?
+                       WHERE id = ? AND status = 'queued' AND NOT EXISTS (
+                           SELECT 1 FROM outbox WHERE prospect_id = ?
+                           AND status IN ('pending_review', 'approved', 'sending', 'sent'))""",
+                    (now, prospect_id, prospect_id),
+                )
+            await db.commit()
+            return withdrawn
+
     async def stop_company(self, prospect_id: str) -> int:
         """Someone replied: mark their company as answered and cancel the
         sequence emails queued for everyone else there. Replies Sellbird owes
@@ -3142,15 +3192,18 @@ class StateManager:
                         return True
         return False
 
-    async def count_writable_prospects(self) -> int:
-        """New prospects the Writer can draft for (a deliverable email)."""
-        marks = ",".join("?" for _ in WRITABLE_EMAIL_STATUSES)
+    async def count_writable_prospects(self, allow_risky: bool = True) -> int:
+        """New prospects the Writer can draft for (a deliverable email).
+        ``allow_risky`` is channels.email.send_to_risky: off, a catch-all
+        address is not one the Writer drafts for, so it isn't counted."""
+        statuses = tuple(s for s in WRITABLE_EMAIL_STATUSES if allow_risky or s != "risky")
+        marks = ",".join("?" for _ in statuses)
         async with self._connect() as db:
             async with db.execute(
                 f"""SELECT COUNT(*) FROM prospects p
                     WHERE status = 'new' AND email != ''
                       AND email_status IN ({marks}) AND NOT {_company_answered('p')}""",
-                WRITABLE_EMAIL_STATUSES,
+                statuses,
             ) as cursor:
                 return (await cursor.fetchone())[0]
 
@@ -3607,7 +3660,9 @@ class StateManager:
 
     # ── Summary for Decision Making ──
 
-    async def get_state_summary(self) -> dict:
+    async def get_state_summary(self, allow_risky: bool = True) -> dict:
+        """``allow_risky`` is channels.email.send_to_risky; it decides whether
+        a 'new' prospect with a catch-all address counts as writable."""
         prospect_counts = await self.count_prospects_by_status()
         today = date.today().isoformat()
         async with self._connect() as db:
@@ -3640,7 +3695,7 @@ class StateManager:
             # The 'new' prospects the Writer can act on. A guessed or invalid
             # address stays 'new' forever, so deciding from the raw count
             # would keep choosing write_campaign with nothing to write.
-            "writable_prospects": await self.count_writable_prospects(),
+            "writable_prospects": await self.count_writable_prospects(allow_risky),
             # Unusable ones found in the last day: the heartbeat pauses
             # prospecting for the day when these alone fill the backlog.
             "recent_unusable_prospects": await self.count_recent_unusable_prospects(),

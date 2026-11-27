@@ -127,6 +127,13 @@ def seconds_until_quiet_hours_end(config: SellbirdConfig) -> int:
 PROSPECT_BACKLOG = 20
 
 
+def _allow_risky(config) -> bool:
+    """channels.email.send_to_risky: whether a catch-all address is one the
+    Writer drafts for. The summary's writable count depends on it."""
+    email = getattr(getattr(config, "channels", None), "email", None)
+    return bool(getattr(email, "send_to_risky", False))
+
+
 def _new_counts(summary: dict) -> tuple[int, int]:
     """(all 'new' prospects, the ones the Writer can draft for)."""
     prospects = summary.get("prospects") or {}
@@ -170,7 +177,7 @@ async def decide_next_action(
     stayed open, and one waiting on the prospect can stay open for weeks.
     """
     if summary is None:
-        summary = await state.get_state_summary()
+        summary = await state.get_state_summary(_allow_risky(config))
 
     # Only prospects the Writer can draft for trigger writing: one with a
     # guessed email stays 'new' for good, and counting it starved Scout.
@@ -401,7 +408,7 @@ async def heartbeat(stop_event: asyncio.Event | None = None):
                 action = "quiet_hours_send"
             else:
                 logger.info("Checking pipeline state...")
-                summary = await state.get_state_summary()
+                summary = await state.get_state_summary(_allow_risky(config))
                 action = await decide_next_action(brain, state, config, summary=summary)
 
             # 5. Execute — run independent agents in parallel where possible

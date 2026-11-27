@@ -35,7 +35,25 @@ EMAIL_RE = re.compile(r"^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$")
 MERGE_TAG_RE = re.compile(r"\{\{\s*\w+\s*\}\}|\{\s*\w+\s*\}(?!\})")
 URL_RE = re.compile(r"https?://\S+", re.IGNORECASE)
 
-DELIVERABLE_STATUSES = {"verified", "risky"}
+DELIVERABLE_STATUSES = frozenset({"verified", "risky"})
+VERIFIED_ONLY = frozenset({"verified"})
+
+
+def sendable_email_statuses(allow_risky: bool) -> frozenset:
+    """The email_status values a cold email may go to: verified mailboxes,
+    plus catch-all ("risky") domains when channels.email.send_to_risky is on.
+    The one rule the Writer, the Sender's staging and this gate all apply, so
+    nothing is drafted or staged that the gate will refuse."""
+    return DELIVERABLE_STATUSES if allow_risky else VERIFIED_ONLY
+
+
+def undeliverable_reason(email_status: str | None, allow_risky: bool) -> str:
+    """Why a cold email to an address with this status must not go out, or
+    "" when it may. A missing status counts as a guess."""
+    status = email_status or "guess"
+    if status in sendable_email_statuses(allow_risky):
+        return ""
+    return f"email_status '{status}' is not deliverable"
 
 
 @dataclass
@@ -199,12 +217,11 @@ def pre_send_check(
     if prospect is not None:
         if (prospect.email or "").strip().lower() != to_email:
             reasons.append("recipient does not match the prospect record")
-        allowed = DELIVERABLE_STATUSES if allow_risky else {"verified"}
         # Replies go back to someone who emailed US — deliverability proven.
-        if kind == "sequence" and (prospect.email_status or "guess") not in allowed:
-            reasons.append(
-                f"email_status '{prospect.email_status or 'guess'}' is not deliverable"
-            )
+        if kind == "sequence":
+            why = undeliverable_reason(prospect.email_status, allow_risky)
+            if why:
+                reasons.append(why)
 
     # Content sanity
     if not subject:
