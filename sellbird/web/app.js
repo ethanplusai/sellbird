@@ -616,8 +616,12 @@ function screenId(id) {
 }
 
 function renderScreenNav(id) {
-  const el = document.getElementById('screen-nav');
-  if (!el) return;
+  let el = document.getElementById('screen-nav');
+  if (!el) {
+    // Older pages could lose it inside a body that re-rendered; make it again.
+    el = document.createElement('div');
+    el.id = 'screen-nav';
+  }
   const s = SCREENS[id];
   let html = '';
   if (s.parent) {
@@ -636,9 +640,14 @@ function renderScreenNav(id) {
   }
   el.innerHTML = html;
   // A way back goes above the page head; a place's views go under its answer.
-  const head = document.querySelector('#' + id + ' .section-head, #' + id + ' .person-head');
+  // Only a head that is the section's own child counts: a head drawn inside a
+  // body that re-renders (a person's page refreshes every few seconds) would
+  // take the nav with it, and its head may not exist yet when the page opens.
+  const section = document.getElementById(id);
+  const head = section && section.querySelector(':scope > .section-head');
   if (head && !s.parent && s.pill) head.after(el);
   else if (head) head.before(el);
+  else if (section) section.prepend(el);
 }
 
 const _scrollAt = {};   // where each screen was scrolled to, for Back
@@ -692,6 +701,13 @@ function showTab(id, opts) {
 function goTab(id) {
   const key = String(id || '').toLowerCase();
   const place = ['outbound', 'inbound', 'people', 'numbers'].includes(key) ? key : null;
+  // Pressing the place you're already in, from a page inside it (one person),
+  // goes back to that place's list instead of staying put.
+  const here = SCREENS[currentTab];
+  if (place && here && here.place === place && here.parent) {
+    showTab(here.parent, {back: true});
+    return;
+  }
   showTab(place && _lastScreen[place] ? _lastScreen[place] : id);
 }
 
