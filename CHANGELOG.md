@@ -7,6 +7,21 @@ minor versions can still change behaviour.
 
 ## [Unreleased]
 
+### Added
+
+- **Quiet hours can be turned off.** Set `usage.quiet_hours.enabled: false`
+  and Sellbird prospects, writes and reads replies around the clock. Cold
+  email still goes out only inside `channels.email.send_window` when one is
+  set, so with `recipient_timezone: true` it keeps landing in each
+  recipient's office hours. Quiet hours stay on by default.
+- **`usage.quiet_hours.background_work: true` keeps the pipeline moving at
+  night.** Quiet hours paused every stage, though only replies and sending
+  contact anyone. With the option on, reading websites, prospecting and
+  writing drafts carry on through them; replies wait for morning, and only
+  cold email due in its recipient's `send_window` goes out (replies are read
+  first, as before). An Instantly deploy, which starts sending, waits too.
+  `sellbird status` says what quiet hours hold. Off by default.
+
 ## [0.5.0] - 2026-11-24
 
 **Your sales team, inside your agent.** Sellbird now lives where you already
