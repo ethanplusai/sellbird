@@ -7,6 +7,25 @@ minor versions can still change behaviour.
 
 ## [Unreleased]
 
+### Added
+
+- **Prospecting volume is a setting.** A new optional `prospecting:` block in
+  sellbird.yaml sets how much each heartbeat finds: web searches
+  (`max_queries_per_cycle`), companies read (`max_companies_per_cycle`),
+  prospects per source (`max_prospects_per_cycle`), Hunter lookups
+  (`hunter_domains_per_cycle`), people per company
+  (`max_contacts_per_company`), websites profiled (`max_profiles_per_cycle`)
+  and the unusable-email pause (`prospect_backlog`). These were fixed in the
+  code; the defaults are the same numbers, so a config without the block
+  behaves as before. See docs/configuration.md.
+- **Finding and writing can share a cycle.** With
+  `prospecting.prospect_while_writing: true`, a cycle that writes emails also
+  runs Scout in parallel, instead of finding only on cycles with nothing to
+  write. Quiet hours, the daily usage limit and the `prospect_backlog` pause
+  still apply, and the extra prospecting stops at 90% of the cycle's time
+  limit so the writer's and the reply reader's results are kept. Off by
+  default.
+
 ## [0.5.0] - 2026-11-24
 
 **Your sales team, inside your agent.** Sellbird now lives where you already

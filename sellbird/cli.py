@@ -258,8 +258,8 @@ def cmd_status(args):
             # Status must still print when sellbird.yaml is broken; that's
             # when people run it. The --check path reports config errors.
             notice = address_notice = ""
-        from sellbird.main import unusable_backlog_notice
-        backlog = unusable_backlog_notice(summary)
+        from sellbird.main import prospect_backlog, unusable_backlog_notice
+        backlog = unusable_backlog_notice(summary, prospect_backlog(loaded))
         if backlog:
             print("  Prospecting:          PAUSED")
             print(textwrap.fill(backlog, width=72, initial_indent="                        ",

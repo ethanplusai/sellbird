@@ -696,6 +696,74 @@ class UsageConfig(BaseModel):
         return v
 
 
+# Every prospecting limit is a count between these; the two that may be 0
+# switch a source off for the cycle (no web searches, no Hunter lookups).
+PROSPECTING_LIMIT_MAX = 1000
+_PROSPECTING_ZERO_OK = ("max_queries_per_cycle", "hunter_domains_per_cycle")
+_PROSPECTING_LIMITS = (
+    "max_queries_per_cycle", "max_companies_per_cycle", "max_prospects_per_cycle",
+    "hunter_domains_per_cycle", "max_contacts_per_company", "max_profiles_per_cycle",
+    "prospect_backlog",
+)
+
+
+class ProspectingConfig(BaseModel):
+    """How much the heartbeat finds and reads each cycle.
+
+    The defaults are the limits Sellbird has always used, sized for a free
+    search tier and a free verifier. Raising them finds more people a cycle
+    and spends search, verifier and Hunter credits faster; one cycle is still
+    cut off after ten minutes (CYCLE_TIMEOUT_SECONDS in sellbird/main.py).
+
+    ``prospect_while_writing`` (off by default) lets a cycle that writes
+    emails also find new prospects. Off, a cycle does one of them: writing
+    wins whenever someone is ready to write to, and finding waits.
+    """
+
+    max_queries_per_cycle: int = 3       # web searches Scout makes per cycle
+    max_companies_per_cycle: int = 10    # companies one discovery pass reads
+    max_prospects_per_cycle: int = 25    # prospects one Scout source adds a cycle
+    hunter_domains_per_cycle: int = 1    # Hunter domain searches per cycle
+    max_contacts_per_company: int = 2    # decision makers taken from one site
+    max_profiles_per_cycle: int = 25     # company websites read per cycle (free)
+    # Prospecting pauses for about a day once this many prospects with no
+    # usable email (a guess, invalid or missing) were found in the last day.
+    prospect_backlog: int = 20
+    prospect_while_writing: bool = False
+
+    @field_validator(*_PROSPECTING_LIMITS, mode="before")
+    @classmethod
+    def _blank_is_default(cls, v, info):
+        if v is None:
+            return cls.model_fields[info.field_name].default
+        if isinstance(v, bool):
+            raise ValueError(f"prospecting.{info.field_name} must be a number, not true/false.")
+        return v
+
+    @field_validator("prospect_while_writing", mode="before")
+    @classmethod
+    def _blank_is_off(cls, v):
+        return False if v is None else v
+
+    @field_validator(*_PROSPECTING_LIMITS)
+    @classmethod
+    def _in_range(cls, v: int, info) -> int:
+        low = 0 if info.field_name in _PROSPECTING_ZERO_OK else 1
+        if not low <= v <= PROSPECTING_LIMIT_MAX:
+            raise ValueError(
+                f"prospecting.{info.field_name} must be between {low} and "
+                f"{PROSPECTING_LIMIT_MAX}."
+            )
+        return v
+
+
+def prospecting_of(config) -> ProspectingConfig:
+    """The configured prospecting limits, or the defaults when a config has
+    none (a hand-built config in a test or an extension)."""
+    prospecting = getattr(config, "prospecting", None)
+    return prospecting if isinstance(prospecting, ProspectingConfig) else ProspectingConfig()
+
+
 BRAIN_PROVIDERS = ("claude", "codex")
 CODEX_REASONING_EFFORTS = ("minimal", "low", "medium", "high", "xhigh")
 
@@ -911,6 +979,7 @@ class SellbirdConfig(BaseModel):
     icp: ICPConfig
     channels: ChannelsConfig = ChannelsConfig()
     usage: UsageConfig = UsageConfig()
+    prospecting: ProspectingConfig = ProspectingConfig()
     brain: BrainConfig = BrainConfig()
     compliance: ComplianceConfig = ComplianceConfig()
     writer: WriterConfig = WriterConfig()

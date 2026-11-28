@@ -13,7 +13,7 @@ from sellbird.extensions import run_tick_steps
 from sellbird.sending_mode import sync_sending_mode
 from sellbird.config import (
     ConfigError, load_config, load_env, SellbirdConfig, legacy_sending_held, sending_notice,
-    compliance_notice, send_window_of,
+    compliance_notice, send_window_of, ProspectingConfig,
 )
 from sellbird.integrations.mail_provider import NATIVE_PROVIDERS
 from sellbird.pidfile import (
@@ -124,7 +124,34 @@ def seconds_until_quiet_hours_end(config: SellbirdConfig) -> int:
 # guess, and prospecting every cycle would spend search and verifier credits
 # on people Sellbird can never email. Nothing re-checks a guess, so the window
 # is a day, never all time: an all-time count would stop Scout for good.
-PROSPECT_BACKLOG = 20
+# The default of `prospecting.prospect_backlog` in sellbird.yaml.
+PROSPECT_BACKLOG = ProspectingConfig().prospect_backlog
+
+# Companies whose websites are read per cycle: the default of
+# `prospecting.max_profiles_per_cycle`.
+PROFILE_LIMIT = ProspectingConfig().max_profiles_per_cycle
+
+# With `prospecting.prospect_while_writing` on, the prospecting that rides
+# along a writing cycle gets its own deadline a little inside the cycle's.
+# A slow search then ends as that step's own failure, and the writer and the
+# reply reader keep their results (so sending isn't held), instead of the
+# whole cycle hitting CYCLE_TIMEOUT_SECONDS.
+RIDE_ALONG_SHARE = 0.9
+
+
+def _prospecting_setting(config, name: str, default):
+    """``prospecting.<name>`` from the config, or ``default`` when the
+    config has no prospecting block (a hand-built one in a test)."""
+    value = getattr(getattr(config, "prospecting", None), name, None)
+    return default if value is None else value
+
+
+def prospect_backlog(config) -> int:
+    return _prospecting_setting(config, "prospect_backlog", PROSPECT_BACKLOG)
+
+
+def profile_limit(config) -> int:
+    return _prospecting_setting(config, "max_profiles_per_cycle", PROFILE_LIMIT)
 
 
 def _new_counts(summary: dict) -> tuple[int, int]:
@@ -136,11 +163,14 @@ def _new_counts(summary: dict) -> tuple[int, int]:
     return new, writable
 
 
-def unusable_backlog_notice(summary: dict) -> str:
-    """Why Sellbird paused prospecting for the day, or ""."""
+def unusable_backlog_notice(summary: dict, backlog: int | None = None) -> str:
+    """Why Sellbird paused prospecting for the day, or "".
+
+    ``backlog`` is `prospecting.prospect_backlog` (PROSPECT_BACKLOG when not
+    given)."""
     _, writable = _new_counts(summary)
     recent = summary.get("recent_unusable_prospects", 0) or 0
-    if writable or recent < PROSPECT_BACKLOG:
+    if writable or recent < (PROSPECT_BACKLOG if backlog is None else backlog):
         return ""
     return (
         f"Sellbird found {recent} prospects in the last day, but none has a verified "
@@ -193,14 +223,44 @@ async def decide_next_action(
         action, reason = "send_campaign", f"{draft_campaigns} draft campaign(s) ready to deploy"
     elif writable > 0:
         action, reason = "write_campaign", f"{writable} new prospect(s) with no drafts ready"
-    elif unusable_backlog_notice(summary):
+    elif unusable_backlog_notice(summary, prospect_backlog(config)):
         action, reason = "idle", "a day's worth of prospects with no usable email"
-        logger.warning(unusable_backlog_notice(summary))
+        logger.warning(unusable_backlog_notice(summary, prospect_backlog(config)))
     else:
         action, reason = "prospect", f"{new_prospects} new prospect(s), none ready to write for"
 
     logger.info(f"Decision: {action} ({reason})")
     return action
+
+
+def prospects_while_writing(config, summary: dict, action: str) -> bool:
+    """True when this cycle also prospects alongside the Writer.
+
+    Only with `prospecting.prospect_while_writing` on, only on a cycle whose
+    main job is write_campaign (so never in quiet hours, which choose no
+    writing), and only while prospecting isn't paused for the day: fewer
+    than `prospecting.prospect_backlog` unusable prospects were found in the
+    last 24 hours. A cycle with nothing to write prospects on its own and
+    goes by the usual rule. Pure: no model call, nothing logged.
+    """
+    if action != "write_campaign":
+        return False
+    if not _prospecting_setting(config, "prospect_while_writing", False):
+        return False
+    recent = summary.get("recent_unusable_prospects", 0) or 0
+    return recent < prospect_backlog(config)
+
+
+async def _with_deadline(coro, seconds: float):
+    """Await ``coro``, cancelling it after ``seconds``. A step cut off this
+    way raises TimeoutError, which _run_agents records as that step's
+    failure; the other steps of the cycle keep their results."""
+    try:
+        return await asyncio.wait_for(coro, timeout=seconds)
+    except asyncio.TimeoutError:
+        raise TimeoutError(
+            f"stopped after {int(seconds)}s so the rest of the cycle could finish"
+        ) from None
 
 
 async def _run_agents(tasks: list) -> dict:
@@ -417,6 +477,21 @@ async def heartbeat(stop_event: asyncio.Event | None = None):
                 tasks.append(("analyze", analyst.run()))
             elif action == "write_campaign":
                 tasks.append(("write_campaign", writer.run()))
+                # prospecting.prospect_while_writing: find new prospects in
+                # the same cycle instead of waiting for one with nothing to
+                # write. Same budget and quiet-hours checks as this cycle
+                # (both ran above), its own deadline inside the cycle's.
+                if prospects_while_writing(config, summary, action):
+                    logger.info("Also prospecting this cycle (prospecting.prospect_while_writing).")
+                    tasks.append(("prospect", _with_deadline(
+                        scout.run(), CYCLE_TIMEOUT_SECONDS * RIDE_ALONG_SHARE)))
+                elif _prospecting_setting(config, "prospect_while_writing", False):
+                    logger.info(
+                        "Not prospecting alongside writing this cycle: "
+                        f"{summary.get('recent_unusable_prospects', 0) or 0} prospects with no "
+                        "usable email were found in the last day (prospecting.prospect_backlog "
+                        f"is {prospect_backlog(config)})."
+                    )
             elif action == "idle":
                 tasks.append(("analyze", analyst.run()))
 
@@ -439,7 +514,8 @@ async def heartbeat(stop_event: asyncio.Event | None = None):
             # Claude budget the rest of this loop is rationing — and it is what
             # turns a name and a domain into something worth writing about.
             if summary.get("unprofiled", 0):
-                tasks.append(("profile", run_profile_stage(state, limit=25, config=config)))
+                tasks.append(("profile", run_profile_stage(
+                    state, limit=profile_limit(config), config=config)))
 
             outcomes = await _run_agents(tasks)
 

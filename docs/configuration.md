@@ -16,6 +16,8 @@ channels:
   email:      { provider: gmail | microsoft | smtp | instantly, max_daily_sends, per_inbox_daily_cap,
                 require_approval, send_to_risky, min_write_score, max_bounce_rate, follow_ups, warmup, send_window, signature }
 usage:        { max_daily_claude_percent, heartbeat_interval_minutes, quiet_hours }
+prospecting:  { max_queries_per_cycle, max_companies_per_cycle, max_prospects_per_cycle, hunter_domains_per_cycle,
+                max_contacts_per_company, max_profiles_per_cycle, prospect_backlog, prospect_while_writing }   # optional
 brain:        { provider: claude | codex, model, reasoning_effort }   # optional; claude by default
 writer:       { humanizer, site_facts, require_tip }   # optional; humanizer true adds one editing pass per batch using ~/.claude/skills/humanizer/SKILL.md
               # site_facts (default true): the Writer sees what the free homepage signals found (no structured data,
@@ -36,6 +38,42 @@ sequence, so Claude calls and sends go to the best matches first.
 `follow_ups` (default true) set to `false` makes a campaign stage only its first email on Gmail, Microsoft and SMTP. Steps 2 and 3 are never prepared, so none can go out to someone who has not answered. A reply is still read, and the answer waits in the Outbox for you as usual. The Writer still drafts the whole sequence; the Sender just doesn't stage the later steps.
 
 `max_daily_claude_percent` caps whichever subscription `brain.provider` uses (the name predates Codex support).
+
+### Prospecting volume
+
+`prospecting` sets how much each heartbeat finds. Every key is optional and
+the defaults are the limits Sellbird has always used, sized for free search
+and verifier tiers:
+
+| Key | Default | What it limits, per cycle |
+| --- | --- | --- |
+| `max_queries_per_cycle` | 3 | Web searches Scout makes. 0 turns search-based finding off. |
+| `max_companies_per_cycle` | 10 | Companies one pass reads: discovery results, and companies on file with no prospect yet. |
+| `max_prospects_per_cycle` | 25 | Prospects one source (Hunter, companies on file, job boards, discovery...) adds before it stops. |
+| `hunter_domains_per_cycle` | 1 | Hunter domain searches. The monthly Hunter budget still applies. 0 turns them off. |
+| `max_contacts_per_company` | 2 | Decision makers taken from one company's website. |
+| `max_profiles_per_cycle` | 25 | Company websites read for signals. Free: no model call. |
+| `prospect_backlog` | 20 | Prospecting pauses for about a day once this many prospects with no usable email (a guess, invalid or missing) were found in the last 24 hours. |
+| `prospect_while_writing` | `false` | See below. |
+
+Each count is between 1 and 1000 (0 is also allowed for the two noted). Higher
+limits find more people a cycle and spend search, verifier and Hunter credits
+faster. A cycle is still stopped after 10 minutes, so raise them in steps and
+watch the log for "Cycle timed out". When you raise them, raise
+`prospect_backlog` too: with a free verifier many found addresses stay a guess,
+and the pause comes sooner.
+
+`prospect_while_writing` (default `false`) decides what a cycle does when
+someone is ready to write to. Off, the cycle writes and finding waits for a
+cycle with nothing to write, so a steady stream of new prospects slows finding
+to a trickle. On, a writing cycle also runs Scout, in parallel with the
+Writer. It changes nothing else: quiet hours still stop both, the
+`max_daily_claude_percent` check still runs before the cycle, the
+`prospect_backlog` pause still stops the extra prospecting, and sending still
+waits for replies to be read. The extra prospecting stops at 90% of the
+cycle's time limit, so a slow search can't cost the cycle the writer's or the
+reply reader's results. Expect more Claude calls a cycle (Scout scores what it
+finds), so the daily usage limit is reached sooner.
 
 If `sellbird.local.yaml` exists it wins. It's gitignored, so a fork can carry real product configuration while the tracked `sellbird.yaml` stays a template — nobody publishes their positioning and pricing by accident.
 
