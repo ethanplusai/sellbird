@@ -7,6 +7,16 @@ minor versions can still change behaviour.
 
 ## [Unreleased]
 
+### Fixed
+
+- **An expired Claude login shows up instead of failing quietly.** When the
+  Claude CLI's subscription login expired, every call failed three times a
+  cycle while the log only said "Claude exited with code 1", and the dashboard
+  still looked healthy. Sellbird now reads the CLI's error (it comes on stdout
+  with JSON output), stops retrying a login error, and marks the brain paused
+  with "run `claude` and type /login" on the Today tab and in
+  `sellbird status`. The next call that works clears it, with no restart.
+
 ## [0.5.0] - 2026-11-24
 
 **Your sales team, inside your agent.** Sellbird now lives where you already
