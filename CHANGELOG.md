@@ -7,6 +7,10 @@ minor versions can still change behaviour.
 
 ## [Unreleased]
 
+- **Leaving a person's page works again.** The way back ("People") stays on a
+  person's page while it refreshes instead of disappearing with it, and pressing
+  People in the dock from that page goes back to the list.
+
 ## [0.5.0] - 2026-11-24
 
 **Your sales team, inside your agent.** Sellbird now lives where you already
