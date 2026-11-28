@@ -3252,11 +3252,17 @@ async function setConvoStatus(id, status) {
 
 // ── Inboxes: the main mailbox and the extra ones you connected ──
 
+// One state per inbox, from its connection, pause and last check
+// (sellbird.inbox_health). The third entry is what the pill means.
 const INBOX_STATE = {
-  sending: ['Sending', 't-good'],
-  paused: ['Paused', 't-waiting'],
-  not_connected: ['Not connected', 't-bad'],
+  ready: ['Ready', 't-good', 'Passed its last check. Sellbird sends from it.'],
+  warming: ['Warming up', 't-note', 'Passed its last check. No cold email until its warmup days are over.'],
+  needs_attention: ['Needs attention', 't-bad', 'Its last check found a problem that stops or hurts sending.'],
+  not_checked: ['Not checked', 't-idle', 'Not checked yet, or the last check couldn\'t finish.'],
+  paused: ['Paused', 't-waiting', 'Paused. Nothing goes out from it until it\'s resumed.'],
+  not_connected: ['Not connected', 't-bad', 'Sellbird can\'t sign in to it from this computer.'],
 };
+const HEALTH_MARK = {pass: ['check', 'Passed'], warn: ['alert', 'Note'], fail: ['x', 'Failed'], unknown: ['alert', 'Couldn\'t check']};
 const INBOX_KINDS = {
   gmail: ['Gmail', 'Google Workspace or Gmail. Sign in with Google in your browser.'],
   microsoft: ['Microsoft 365', 'Outlook or Microsoft 365. Sign in with Microsoft in your browser.'],
@@ -3266,8 +3272,43 @@ let _inboxes = null;
 let _inboxPoll = null;
 
 function inboxBadge(ib) {
-  const [label, tone] = INBOX_STATE[ib.state] || [ib.state, 't-idle'];
-  return '<span class="badge ' + tone + '">' + escHtml(label) + '</span>';
+  const [label, tone, meaning] = INBOX_STATE[ib.state] || [ib.state, 't-idle', ''];
+  const h = ib.health;
+  const tip = (h && h.summary && ib.state !== 'not_connected' ? h.summary + ' ' : meaning + ' ') +
+    (h && h.checked_at ? 'Checked ' + relTime(h.checked_at) + '.' : '');
+  return '<span class="badge ' + tone + '" title="' + escHtml(tip.trim()) + '">' + escHtml(label) + '</span>';
+}
+
+// The last Check connection, line by line: what passed, and for anything
+// that didn't, what's wrong and how to fix it.
+function inboxHealth(ib) {
+  const h = ib.health;
+  const out = '<div class="health" id="ib-health" aria-live="polite"><div class="health-head"><h4>Connection check</h4>' +
+    '<span class="health-when">' + (h && h.checked_at ? 'Checked ' + escHtml(relTime(h.checked_at)) : 'Not checked yet') + '</span></div>';
+  if (!h) {
+    return out + '<p class="health-empty">Check connection signs in, reads your domain\'s email records ' +
+      '(MX, SPF, DKIM, DMARC) and looks at the warmup. It never sends an email.</p></div>';
+  }
+  const lines = (h.checks || []).map(c => {
+    const [mark, word] = HEALTH_MARK[c.status] || HEALTH_MARK.unknown;
+    return '<li class="health-line is-' + escHtml(c.status) + '">' +
+      '<span class="health-mark" role="img" aria-label="' + word + '">' + icon(mark) + '</span>' +
+      '<div class="health-text"><div class="health-label">' + escHtml(c.label) + '</div>' +
+      (c.detail ? '<div class="health-detail">' + escHtml(c.detail) + '</div>' : '') +
+      (c.fix ? '<div class="health-fix"><b>Fix:</b> ' + escHtml(c.fix) + '</div>' : '') + '</div></li>';
+  }).join('');
+  return out + '<ul class="health-list">' + lines + '</ul></div>';
+}
+
+function inboxIndex(id) {
+  return ((_inboxes && _inboxes.inboxes) || []).findIndex(i => i.id === id);
+}
+
+async function reopenInbox(id) {
+  await loadInboxes();
+  const i = inboxIndex(id);
+  if (i >= 0) openInbox(i);
+  else closeInboxDialog();
 }
 
 function inboxMeter(ib) {
@@ -3299,7 +3340,8 @@ async function loadInboxes() {
       'Set channels.email.provider in sellbird.yaml to one of those to use it.');
     return;
   }
-  actions.innerHTML = '<button class="btn btn-primary" onclick="openAddInbox()">' + icon('plus') +
+  actions.innerHTML = '<button class="btn btn-secondary" id="check-all" onclick="checkAllInboxes()">' + icon('refresh') +
+    'Check all</button><button class="btn btn-primary" onclick="openAddInbox()">' + icon('plus') +
     'Add inbox</button>';
 
   let html = '';
@@ -3308,12 +3350,21 @@ async function loadInboxes() {
       '. Resume it in the Outbox.</div>';
   }
   const list = data.inboxes || [];
-  const sending = list.filter(i => i.state === 'sending');
-  const capToday = sending.reduce((n, i) => n + (Number(i.cold_cap) || 0), 0);
+  const ready = list.filter(i => i.state === 'ready');
+  const attention = list.filter(i => i.state === 'needs_attention' || i.state === 'not_connected').length;
+  const unchecked = list.filter(i => i.state === 'not_checked').length;
+  const capToday = ready.reduce((n, i) => n + (Number(i.cold_cap) || 0), 0);
   const sentToday = list.reduce((n, i) => n + (Number(i.cold_sent_today) || 0), 0);
   const waiting = list.reduce((n, i) => n + (Number(i.first_emails_waiting) || 0), 0);
+  if (attention) {
+    html += '<div class="notice bad"><b>' + attention + (attention === 1 ? ' inbox needs' : ' inboxes need') +
+      ' attention.</b> Open ' + (attention === 1 ? 'it' : 'each one') + ' to see what\'s wrong and how to fix it.</div>';
+  } else if (unchecked) {
+    html += '<div class="notice info">' + unchecked + (unchecked === 1 ? ' inbox hasn\'t' : ' inboxes haven\'t') +
+      ' been checked yet. <b>Check all</b> signs in to each and reads its domain\'s email records. It sends nothing.</div>';
+  }
   html += '<div class="inbox-summary">' +
-    '<span><b>' + list.length + '</b> ' + (list.length === 1 ? 'inbox' : 'inboxes') + ', <b>' + sending.length + '</b> sending</span>' +
+    '<span><b>' + list.length + '</b> ' + (list.length === 1 ? 'inbox' : 'inboxes') + ', <b>' + ready.length + '</b> ready</span>' +
     '<span><b>' + sentToday + '</b>' + (capToday ? ' of <b>' + Math.min(capToday, Number(data.max_daily_sends)) + '</b>' : '') + ' cold emails sent today</span>' +
     '<span><b>' + waiting + '</b> first emails waiting to go</span></div>';
 
@@ -3379,6 +3430,7 @@ function openInbox(i) {
   if (ib.paused_reason) {
     body += '<div class="notice wait"><b>Paused:</b> ' + escHtml(ib.paused_reason) + '</div>';
   }
+  body += inboxHealth(ib);
   body += '<div class="modal-stats">' +
     '<div class="inset"><div class="k">Cold today</div><div class="v">' + Number(ib.cold_sent_today) + ' / ' + Number(ib.cold_cap) + '</div></div>' +
     '<div class="inset"><div class="k">First emails waiting</div><div class="v">' + Number(ib.first_emails_waiting) + '</div></div>' +
@@ -3408,29 +3460,32 @@ function openInbox(i) {
       'its address is persona.email, its daily cap is channels.email.per_inbox_daily_cap, and pausing it pauses ' +
       'all sending, in the Outbox.</p></div>';
     inboxDialog(inboxDialogHead(escHtml(ib.address || 'Main mailbox'), inboxBadge(ib) + ' Main mailbox') +
-      '<div class="modal-body">' + body + '</div>');
+      '<div class="modal-body">' + body + '</div>' +
+      '<div class="modal-foot"><button class="btn btn-primary" id="ib-check" onclick="testInbox(\'main\')">' +
+      (ib.health ? 'Check again' : 'Check connection') + '</button></div>');
     return;
   }
   const id = jsq(ib.id);
-  body += '<div class="modal-section"><h4>Daily cold-email cap</h4>' +
-    '<div class="inline-edit"><input class="form-input" id="ib-cap" type="number" min="1" max="500" inputmode="numeric" placeholder="Default (' +
-    Number(_inboxes.per_inbox_daily_cap) + ')" value="' + (ib.cap_is_yours ? Number(ib.cold_cap) : '') + '">' +
-    '<button class="btn btn-secondary" onclick="saveInboxCap(' + id + ')">Save</button></div>' +
-    '<div class="form-hint">Leave empty for the default. Warming inboxes start lower on their own.</div></div>';
-  body += '<div class="modal-section"><h4>Sender name</h4>' +
-    '<div class="inline-edit"><input class="form-input" id="ib-name" maxlength="100" placeholder="Your persona name" value="' + escHtml(ib.name || '') + '">' +
-    '<button class="btn btn-secondary" onclick="saveInboxName(' + id + ')">Save</button></div>' +
-    '<div class="form-hint">The name people see in From.</div></div>';
+  const kindName = ib.provider === 'smtp' ? 'SMTP' : (INBOX_KINDS[ib.provider === 'google' ? 'gmail' : ib.provider] || [ib.provider])[0];
+  body += '<div class="modal-section"><div class="modal-section-head"><h4>Settings</h4>' +
+    '<button class="btn btn-ghost btn-sm" onclick="openInboxEdit(' + i + ')">' + icon('pen') + 'Edit settings</button></div>' +
+    '<dl class="kv">' +
+    '<dt>Sender name</dt><dd>' + (ib.name ? escHtml(ib.name) : '<span class="muted">Your persona name</span>') + '</dd>' +
+    '<dt>Daily cold-email cap</dt><dd>' + (ib.cap_is_yours ? Number(ib.cold_cap) : 'Default (' + Number(_inboxes.per_inbox_daily_cap) + ')') + '</dd>' +
+    '<dt>Connection</dt><dd>' + escHtml(kindName || 'Unknown') + '</dd></dl></div>';
   body += '<div class="modal-section"><h4>Remove this inbox</h4><p>Sellbird stops sending from it, and threads it started end. Its sign-in stays in your keychain.</p>' +
     '<div class="inline-edit" style="margin-top:8px"><input class="form-input" id="ib-confirm" placeholder="Type ' + escHtml(ib.address) + ' to confirm">' +
     '<button class="btn btn-danger" onclick="removeInbox(' + id + ')">Remove</button></div></div>';
 
   const pauseBtn = ib.paused_reason
-    ? '<button class="btn btn-primary" onclick="inboxAction(' + id + ',\'resume\')">Resume sending</button>'
-    : '<button class="btn btn-secondary" onclick="inboxAction(' + id + ',\'pause\')"' + (ib.state === 'not_connected' ? ' disabled' : '') + '>Pause</button>';
+    ? '<button class="btn btn-secondary" onclick="inboxAction(' + id + ',\'resume\')">Resume sending</button>'
+    : '<button class="btn btn-ghost" onclick="inboxAction(' + id + ',\'pause\')"' + (ib.state === 'not_connected' ? ' disabled' : '') + '>Pause</button>';
   inboxDialog(inboxDialogHead(escHtml(ib.address), inboxBadge(ib) + ' ' + escHtml(ib.name || '')) +
     '<div class="modal-body">' + body + '</div>' +
-    '<div class="modal-foot"><button class="btn btn-ghost" onclick="testInbox(' + id + ')">Check connection</button>' + pauseBtn + '</div>');
+    '<div class="modal-foot">' + pauseBtn + '<span class="foot-gap"></span>' +
+    '<button class="btn btn-secondary" onclick="openInboxEdit(' + i + ')">Edit settings</button>' +
+    '<button class="btn btn-primary" id="ib-check" onclick="testInbox(' + id + ')">' +
+    (ib.health ? 'Check again' : 'Check connection') + '</button></div>');
 }
 
 async function inboxPost(path, body, done, keepOpen) {
@@ -3449,26 +3504,195 @@ function inboxAction(id, action) {
             action === 'pause' ? 'Inbox paused' : 'Inbox sends again');
 }
 
-function saveInboxCap(id) {
-  const v = document.getElementById('ib-cap').value.trim();
-  inboxPost('/api/inboxes/' + encodeURIComponent(id) + '/cap', {cap: v === '' ? null : Number(v)}, 'Cap saved');
-}
-
-function saveInboxName(id) {
-  inboxPost('/api/inboxes/' + encodeURIComponent(id) + '/name',
-            {name: document.getElementById('ib-name').value.trim()}, 'Name saved');
-}
-
 function removeInbox(id) {
   inboxPost('/api/inboxes/' + encodeURIComponent(id) + '/remove',
             {confirm: document.getElementById('ib-confirm').value.trim().toLowerCase()}, 'Inbox removed');
 }
 
+const VERDICT_TOAST = {
+  ready: ['Passed. It\'s ready to send.', 'success'],
+  warming: ['Passed. It\'s still warming up.', 'success'],
+  needs_attention: ['Found a problem. The check shows how to fix it.', 'error'],
+  not_checked: ['Some checks couldn\'t finish. Try again in a minute.', 'error'],
+};
+
+// Check connection: sign in, read the DNS, look at the warmup. Shows the
+// result in the open dialog and keeps it for the list.
 async function testInbox(id) {
-  showToast('Checking the connection...', 'info');
+  const btn = document.getElementById('ib-check');
+  const panel = document.getElementById('ib-health');
+  if (btn) { btn.disabled = true; btn.textContent = 'Checking...'; }
+  if (panel) panel.classList.add('is-busy');
   const r = await api('/api/inboxes/' + encodeURIComponent(id) + '/test', {method: 'POST'});
-  if (r && r.success) showToast(r.detail || (r.ok ? 'Connected' : 'Not connected'), r.ok ? 'success' : 'error');
-  else showToast((r && r.message) || 'Couldn\'t check it.', 'error');
+  if (r && r.success && r.health) {
+    const [msg, tone] = VERDICT_TOAST[r.health.verdict] || VERDICT_TOAST.not_checked;
+    showToast(msg, tone);
+    const d = document.getElementById('inbox-dialog');
+    if (d && d.open) await reopenInbox(id); else loadInboxes();
+  } else {
+    if (btn) { btn.disabled = false; btn.textContent = 'Check connection'; }
+    if (panel) panel.classList.remove('is-busy');
+    showToast((r && r.message) || 'Couldn\'t check it.', 'error');
+  }
+}
+
+async function checkAllInboxes() {
+  const btn = document.getElementById('check-all');
+  const list = ((_inboxes && _inboxes.inboxes) || []).filter(i => i.state !== 'not_connected');
+  if (!list.length) return;
+  if (btn) btn.disabled = true;
+  let bad = 0;
+  for (let n = 0; n < list.length; n++) {
+    if (btn) btn.textContent = 'Checking ' + (n + 1) + ' of ' + list.length + '...';
+    const r = await api('/api/inboxes/' + encodeURIComponent(list[n].id) + '/test', {method: 'POST'});
+    if (!r || !r.health || r.health.verdict === 'needs_attention' || r.health.verdict === 'not_checked') bad++;
+  }
+  showToast(bad ? bad + (bad === 1 ? ' inbox needs' : ' inboxes need') + ' a look.' : 'Every inbox passed.', bad ? 'error' : 'success');
+  loadInboxes();
+}
+
+// Editing an inbox: every field it was added with, the password masked.
+// Saving checks a new sign-in first, and nothing is saved when it fails.
+
+let _editInbox = null;
+
+async function openInboxEdit(i) {
+  const ib = (_inboxes && _inboxes.inboxes || [])[i];
+  if (!ib || ib.main) return;
+  const st = await api('/api/inboxes/' + encodeURIComponent(ib.id) + '/settings');
+  if (!st || st.success === false) { showToast((st && st.message) || 'Couldn\'t open its settings.', 'error'); return; }
+  _editInbox = {i: i, id: ib.id, settings: st};
+  const a = x => escHtml(x == null ? '' : String(x));
+  let form = '<div id="edit-status"></div>' +
+    '<div class="form-group"><span class="form-label">Email address</span><div class="readonly-field">' + a(st.address) + '</div>' +
+    '<div class="form-hint">To send from another address, add it as a new inbox.</div></div>' +
+    '<div class="form-row"><div class="form-group"><label class="form-label" for="ed-name">Sender name <span class="optional-tag">optional</span></label>' +
+    '<input class="form-input" id="ed-name" maxlength="100" placeholder="Your persona name" value="' + a(st.name) + '"></div>' +
+    '<div class="form-group"><label class="form-label" for="ed-warmup">Warming up since <span class="optional-tag">optional</span></label>' +
+    '<input class="form-input" id="ed-warmup" type="date" value="' + a(st.warmup_started_at) + '"></div></div>' +
+    '<div class="form-group"><label class="form-label" for="ed-cap">Daily cold-email cap <span class="optional-tag">optional</span></label>' +
+    '<input class="form-input" id="ed-cap" type="number" min="1" max="' + Number(st.max_cap) + '" inputmode="numeric" placeholder="Default (' +
+    Number(st.default_cap) + ')" value="' + (st.cap == null ? '' : Number(st.cap)) + '" style="max-width:200px">' +
+    '<div class="form-hint">Leave empty for the default. Warming inboxes start lower on their own.</div></div>';
+  if (st.smtp) {
+    form += '<div class="modal-section"><h4>Server</h4>' +
+      '<div class="form-row"><div class="form-group"><label class="form-label" for="ed-host">SMTP server</label>' +
+      '<input class="form-input" id="ed-host" value="' + a(st.smtp.host) + '" placeholder="smtp.yourhost.com"></div>' +
+      '<div class="form-group" style="max-width:110px"><label class="form-label" for="ed-port">Port</label>' +
+      '<input class="form-input" id="ed-port" type="number" value="' + Number(st.smtp.port || 587) + '"></div></div>' +
+      '<div class="form-group"><label class="form-label" for="ed-user">Username</label>' +
+      '<input class="form-input" id="ed-user" value="' + a(st.smtp.username) + '" placeholder="Same as the address"></div>' +
+      '<div class="form-group" id="ed-pass-group"><span class="form-label">Password or app password</span>' +
+      '<div class="secret-row"><span class="secret-mask">' + (st.has_password ? '<span aria-hidden="true">••••••••••</span><span class="sr-only">Saved</span>' : 'None saved') + '</span>' +
+      '<button class="btn btn-secondary btn-sm" type="button" onclick="revealPasswordField()">' + (st.has_password ? 'Replace password' : 'Add password') + '</button></div>' +
+      '<div class="form-hint">Kept in your system keychain. It never comes back to this page.</div></div>' +
+      '<div class="form-row"><div class="form-group"><label class="form-label" for="ed-imap">IMAP server (for reading replies)</label>' +
+      '<input class="form-input" id="ed-imap" value="' + a(st.smtp.imap_host) + '" placeholder="Same as the SMTP server"></div>' +
+      '<div class="form-group" style="max-width:110px"><label class="form-label" for="ed-imap-port">Port</label>' +
+      '<input class="form-input" id="ed-imap-port" type="number" value="' + Number(st.smtp.imap_port || 993) + '"></div></div></div>';
+  } else if (st.connection === 'oauth') {
+    const who = st.provider === 'google' ? 'Google' : 'Microsoft';
+    const kind = st.provider === 'google' ? 'gmail' : 'microsoft';
+    const can = ((_inboxes && _inboxes.can_connect) || {})[kind];
+    form += '<div class="modal-section"><h4>Sign-in</h4><p>Signed in with ' + who + ' as ' + a(st.address) +
+      '. If the check says the sign-in stopped working, sign in again. Its sent mail and threads stay with it.</p>' +
+      (can ? '<button class="btn btn-secondary" id="ed-resign" onclick="signInAgain(' + jsq(st.id) + ',\'' + kind + '\')">Sign in again with ' + who + '</button>'
+           : connectSetupNotice(kind)) + '</div>';
+  }
+  inboxDialog(inboxDialogHead('Edit ' + a(st.address), 'Saving checks the connection again. Its sending history stays with it.') +
+    '<div class="modal-body">' + form + '</div>' +
+    '<div class="modal-foot"><button class="btn btn-ghost" onclick="cancelInboxEdit()">Cancel</button>' +
+    '<button class="btn btn-primary" id="ed-save" onclick="saveInboxEdit(false)">Save and check</button></div>');
+  const first = document.getElementById('ed-name');
+  if (first) first.focus();
+}
+
+function revealPasswordField() {
+  const g = document.getElementById('ed-pass-group');
+  if (!g) return;
+  g.innerHTML = '<label class="form-label" for="ed-pass">New password or app password</label>' +
+    '<input class="form-input" id="ed-pass" type="password" autocomplete="new-password">' +
+    '<div class="form-hint">Replaces the saved one once Sellbird signs in with it. Leave it empty to keep the old one.</div>';
+  document.getElementById('ed-pass').focus();
+}
+
+function cancelInboxEdit() {
+  const e = _editInbox;
+  _editInbox = null;
+  if (_inboxPoll) { clearInterval(_inboxPoll); _inboxPoll = null; }
+  if (e) openInbox(e.i); else closeInboxDialog();
+}
+
+function editStatus(cls, html) {
+  const el = document.getElementById('edit-status');
+  if (el) el.innerHTML = html ? '<div class="notice ' + cls + '">' + html + '</div>' : '';
+}
+
+async function saveInboxEdit(anyway) {
+  const e = _editInbox;
+  if (!e) return;
+  const v = id => { const el = document.getElementById(id); return el ? el.value.trim() : ''; };
+  const capText = v('ed-cap');
+  const body = {name: v('ed-name'), warmup_started: v('ed-warmup'), cap: capText ? Number(capText) : null};
+  if (e.settings.smtp) {
+    Object.assign(body, {smtp_host: v('ed-host'), smtp_port: Number(v('ed-port') || 587),
+      username: v('ed-user'), imap_host: v('ed-imap'), imap_port: Number(v('ed-imap-port') || 993)});
+    const pass = document.getElementById('ed-pass');
+    if (pass && pass.value) body.password = pass.value;
+  }
+  if (anyway) body.save_anyway = true;
+  const go = document.getElementById('ed-save');
+  go.disabled = true; go.textContent = 'Checking...';
+  editStatus('info', 'Signing in with these settings. Nothing is saved unless that works.');
+  const r = await api('/api/inboxes/' + encodeURIComponent(e.id) + '/settings', {method: 'POST',
+    headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+  if (r && r.success) {
+    _editInbox = null;
+    const [msg, tone] = VERDICT_TOAST[(r.health || {}).verdict] || ['', 'success'];
+    showToast(('Saved. ' + msg).trim(), tone);
+    await reopenInbox(e.id);
+    return;
+  }
+  go.disabled = false; go.textContent = 'Save and check';
+  editStatus('bad', signInFailure(r, 'saveInboxEdit(true)'));
+}
+
+// A refused sign-in: why, how to fix it, and a way to save it anyway.
+function signInFailure(r, anywayCall) {
+  let html = escHtml((r && r.message) || 'That didn\'t work.');
+  if (r && r.sign_in_failed) {
+    html += (r.fix ? '<div class="notice-fix">' + escHtml(r.fix) + '</div>' : '') +
+      '<button class="btn btn-secondary btn-sm" onclick="' + anywayCall + '">Save anyway</button>';
+  }
+  return html;
+}
+
+async function signInAgain(id, kind) {
+  const go = document.getElementById('ed-resign');
+  if (go) go.disabled = true;
+  editStatus('info', 'Opening the sign-in...');
+  const r = await api('/api/inboxes/' + encodeURIComponent(id) + '/reconnect', {method: 'POST'});
+  if (!r || !r.success) {
+    if (go) go.disabled = false;
+    editStatus('bad', escHtml((r && r.message) || 'That didn\'t work.'));
+    return;
+  }
+  editStatus('wait', 'A ' + (kind === 'gmail' ? 'Google' : 'Microsoft') + ' sign-in opened in your browser. ' +
+    'Sign in as this address and allow access. This page updates when you\'re done.');
+  if (_inboxPoll) clearInterval(_inboxPoll);
+  _inboxPoll = setInterval(async () => {
+    const s = await api('/api/inboxes/connect/status');
+    if (!s || s.state === 'waiting') return;
+    clearInterval(_inboxPoll); _inboxPoll = null;
+    if (s.state === 'connected') {
+      _editInbox = null;
+      showToast('Signed in again, and checked.', 'success');
+      await reopenInbox(id);
+    } else {
+      if (go) go.disabled = false;
+      editStatus('bad', escHtml(s.message || 'The sign-in didn\'t finish.'));
+    }
+  }, 1500);
 }
 
 // Adding an inbox
@@ -3599,8 +3823,8 @@ async function connectMainMailbox(kind) {
     if (!s || s.state === 'waiting') return;
     clearInterval(_inboxPoll); _inboxPoll = null;
     if (s.state === 'connected') {
-      showToast('Main mailbox connected', 'success');
-      closeInboxDialog(); loadInboxes();
+      showToast('Main mailbox connected, and checked.', 'success');
+      await reopenInbox('main');
     } else {
       if (go) go.disabled = false;
       say('bad', escHtml(s.message || 'The sign-in didn\'t finish.'));
@@ -3608,7 +3832,7 @@ async function connectMainMailbox(kind) {
   }, 1500);
 }
 
-async function submitAddInbox() {
+async function submitAddInbox(anyway) {
   const v = id => { const el = document.getElementById(id); return el ? el.value.trim() : ''; };
   const body = {address: v('add-address'), name: v('add-name'), warmup_started: v('add-warmup')};
   const go = document.getElementById('add-go');
@@ -3616,20 +3840,21 @@ async function submitAddInbox() {
     Object.assign(body, {smtp_host: v('add-host'), smtp_port: Number(v('add-port') || 587),
       password: document.getElementById('add-password').value, username: v('add-user'),
       imap_host: v('add-imap'), imap_port: Number(v('add-imap-port') || 993)});
+    if (anyway) body.save_anyway = true;
   }
   go.disabled = true;
-  addStatus('info', _addKind === 'smtp' ? 'Connecting and checking the sign-in...' : 'Opening the sign-in...');
+  addStatus('info', _addKind === 'smtp' ? 'Signing in with these settings. Nothing is saved unless that works.' : 'Opening the sign-in...');
   const r = await api('/api/inboxes/connect/' + _addKind, {method: 'POST',
     headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
   if (!r || !r.success) {
     go.disabled = false;
-    addStatus('bad', escHtml((r && r.message) || 'That didn\'t work.'));
+    addStatus('bad', signInFailure(r, 'submitAddInbox(true)'));
     return;
   }
   if (_addKind === 'smtp') {
-    showToast('Connected ' + r.address, 'success');
-    if (!r.test_ok) showToast('It\'s connected, but the check failed: ' + (r.test_detail || ''), 'error');
-    closeInboxDialog(); loadInboxes();
+    const [msg, tone] = VERDICT_TOAST[(r.health || {}).verdict] || ['', 'success'];
+    showToast(('Connected ' + r.address + '. ' + msg).trim(), tone);
+    await reopenInbox(r.id);
     return;
   }
   addStatus('wait', 'A ' + (_addKind === 'gmail' ? 'Google' : 'Microsoft') + ' sign-in opened in your browser. ' +
@@ -3639,9 +3864,9 @@ async function submitAddInbox() {
     if (!s || s.state === 'waiting') return;
     clearInterval(_inboxPoll); _inboxPoll = null;
     if (s.state === 'connected') {
-      showToast('Connected ' + s.address, 'success');
-      if (s.message) showToast('It\'s connected, but the check failed: ' + s.message, 'error');
-      closeInboxDialog(); loadInboxes();
+      const [msg, tone] = VERDICT_TOAST[s.verdict] || ['', 'success'];
+      showToast(('Connected ' + s.address + '. ' + msg).trim(), tone);
+      await reopenInbox(s.id);
     } else {
       go.disabled = false;
       addStatus('bad', escHtml(s.message || 'The sign-in didn\'t finish.'));

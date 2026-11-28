@@ -1153,13 +1153,14 @@ a.btn, a.btn:hover { text-decoration: none; }
 .inbox-summary b { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
 .inbox-list { display: flex; flex-direction: column; gap: var(--sp-2); margin-bottom: var(--sp-5); }
 .inbox-row {
-  display: grid; grid-template-columns: 36px minmax(0, 1.6fr) auto minmax(150px, 1fr) minmax(90px, auto) 16px;
+  display: grid; grid-template-columns: 36px minmax(0, 1.6fr) 136px minmax(150px, 1fr) minmax(90px, auto) 16px;
   align-items: center; gap: var(--sp-4); width: 100%; min-height: 64px; padding: var(--sp-3) var(--sp-4);
   background: var(--surface); border: none; border-radius: var(--r-lg); box-shadow: var(--shadow-border);
   font: inherit; color: var(--text); text-align: left; cursor: pointer;
   transition-property: box-shadow, background-color; transition-duration: 120ms; transition-timing-function: ease-out;
 }
 @media (hover: hover) { .inbox-row:hover { box-shadow: var(--shadow-border-hover); background: var(--surface-2); } }
+.inbox-row > .badge { justify-self: start; }
 .inbox-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .inbox-avatar {
   width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center;
@@ -1196,6 +1197,7 @@ dialog.modal::backdrop { background: rgb(0 0 0 / 0.45); }
 .modal-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--sp-3); padding: var(--sp-5) var(--sp-5) var(--sp-3); }
 .modal-head h3 { font-size: var(--fs-h3); font-weight: 600; letter-spacing: -0.015em; overflow-wrap: anywhere; }
 .modal-head .sub { font-size: var(--fs-ui); color: var(--text-2); margin-top: 4px; }
+.modal-head .sub:has(> .badge) { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
 .modal-body { padding: 0 var(--sp-5) var(--sp-5); }
 .modal-foot { position: sticky; bottom: 0; display: flex; justify-content: flex-end; gap: var(--sp-2); padding: var(--sp-4) var(--sp-5); border-top: 1px solid var(--line); background: var(--surface); }
 .modal-section { padding-top: var(--sp-4); margin-top: var(--sp-4); border-top: 1px solid var(--line); }
@@ -1221,6 +1223,38 @@ dialog.modal::backdrop { background: rgb(0 0 0 / 0.45); }
 .cmd-copy { display: flex; gap: var(--sp-2); align-items: center; margin-top: var(--sp-2); }
 .cmd-copy code { flex: 1; min-width: 0; padding: 8px 10px; border-radius: var(--r-sm); background: var(--surface-2); font: 400 var(--fs-caption)/1.5 var(--mono, ui-monospace, monospace); overflow-wrap: anywhere; }
 .form-hint { font-size: var(--fs-caption); color: var(--text-3); margin-top: 4px; }
+/* One inbox's connection check: a line per check, the fix under anything
+   that didn't pass. */
+.health { margin-bottom: var(--sp-4); }
+.health-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--sp-3); margin-bottom: var(--sp-2); }
+.health-head h4 { font-size: var(--fs-ui); font-weight: 600; }
+.health-when { font-size: var(--fs-caption); color: var(--text-3); font-variant-numeric: tabular-nums; }
+.health-empty { font-size: var(--fs-ui); color: var(--text-2); line-height: 1.55; padding: var(--sp-3) var(--sp-4); border-radius: var(--r-md); background: var(--surface-2); }
+.health-list { list-style: none; margin: 0; padding: 0; border-radius: var(--r-md); box-shadow: var(--shadow-border); }
+.health-line { display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: var(--sp-3); padding: 10px var(--sp-4); }
+.health-line + .health-line { border-top: 1px solid var(--line); }
+.health-mark { width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; margin-top: 1px; }
+.health-mark .icon { width: 12px; height: 12px; stroke-width: 2.5; }
+.health-line.is-pass .health-mark { background: var(--good-bg); color: var(--good); }
+.health-line.is-warn .health-mark { background: var(--wait-bg); color: var(--wait); }
+.health-line.is-fail .health-mark { background: var(--bad-bg); color: var(--bad); }
+.health-line.is-unknown .health-mark { background: var(--surface-2); color: var(--text-3); }
+.health-label { font-size: var(--fs-ui); font-weight: 600; }
+.health-line.is-fail .health-label { color: var(--bad); }
+.health-detail { font-size: var(--fs-caption); color: var(--text-2); margin-top: 2px; line-height: 1.5; overflow-wrap: anywhere; }
+.health-fix { font-size: var(--fs-caption); color: var(--text); margin-top: 6px; line-height: 1.5; }
+.health-fix b { font-weight: 600; }
+.health.is-busy .health-list, .health.is-busy .health-empty { opacity: 0.5; transition: opacity 160ms ease-out; }
+.modal-section-head { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); margin-bottom: var(--sp-2); }
+.modal-section-head h4 { margin-bottom: 0; }
+.kv { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px var(--sp-4); font-size: var(--fs-ui); margin: 0; }
+.kv dt { color: var(--text-3); }
+.kv dd { margin: 0; overflow-wrap: anywhere; }
+.readonly-field { padding: 8px 10px; border-radius: var(--r-sm); background: var(--surface-2); font-size: var(--fs-ui); color: var(--text-2); overflow-wrap: anywhere; }
+.secret-row { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); padding: 6px 6px 6px 10px; border-radius: var(--r-sm); box-shadow: var(--shadow-border); }
+.secret-mask { font-size: var(--fs-ui); color: var(--text-2); letter-spacing: 0.08em; }
+.modal-foot .foot-gap { flex: 1; }
+.notice-fix { margin: 6px 0 var(--sp-2); color: var(--text); }
 .notice { padding: var(--sp-3) var(--sp-4); border-radius: var(--r-md); font-size: var(--fs-ui); line-height: 1.55; margin-bottom: var(--sp-4); }
 .notice .setup-steps { margin: var(--sp-2) 0 var(--sp-3); padding-left: 1.3em; display: grid; gap: 4px; }
 .notice .setup-steps a { color: inherit; text-decoration: underline; }

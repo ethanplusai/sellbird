@@ -10,6 +10,13 @@ allowlist. No response here carries a credential, a keychain ref or SMTP
 settings: rows are built from explicit fields.
 
 The main mailbox has no row; in a path it is `main`.
+
+Each inbox shows one state (sellbird.inbox_health): not connected, paused,
+needs attention, warming up, ready, or not checked. "Check connection" runs
+the full check (sign-in, the domain's DNS, warmup) and keeps the result; no
+check ever sends an email. Editing an inbox's settings checks the new
+sign-in before anything is saved, and keeps the same row, so its sent mail
+and threads stay with it.
 """
 
 from __future__ import annotations
@@ -21,9 +28,22 @@ import re
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
+from sellbird import inbox_health
 from sellbird.mailboxes import (
-    HARD_MAX_INBOX_CAP, MAIN, ConnectRefused, MailboxStore, build_provider,
-    check_provider_allows_inboxes, connect_oauth_mailbox, connect_smtp_mailbox, load_inboxes,
+    HARD_MAX_INBOX_CAP,
+    MAIN,
+    ConnectRefused,
+    MailboxStore,
+    TokenTooLarge,
+    build_provider,
+    check_provider_allows_inboxes,
+    check_warmup_start,
+    connect_oauth_mailbox,
+    connect_smtp_mailbox,
+    keychain_token,
+    load_inboxes,
+    oauth_ref,
+    smtp_ref,
 )
 from sellbird.secrets import SecretStore, SecretStoreUnavailable
 
@@ -88,12 +108,9 @@ async def list_inboxes():
     out = []
     for inbox in inboxes.inboxes.values():
         row = rows.get(inbox.id, {})
-        if not inbox.connected:
-            state = "not_connected"
-        elif inbox.paused_reason:
-            state = "paused"
-        else:
-            state = "sending"
+        health = await inbox_health.load_result(store, MAIN_PATH if inbox.main else inbox.id)
+        state = inbox_health.inbox_state(connected=inbox.connected,
+                                         paused=bool(inbox.paused_reason), health=health)
         out.append({
             "id": MAIN_PATH if inbox.main else inbox.id,
             "main": inbox.main,
@@ -107,7 +124,9 @@ async def list_inboxes():
             "cap_is_yours": row.get("cap_override") is not None,
             "cold_sent_today": inbox.sent_today,
             "first_emails_waiting": max(0, inbox.queued_first),
-            "warmup_started_at": row.get("warmup_started_at") or "",
+            "warmup_started_at": (_warmup_shape(email).start_date if inbox.main
+                                  else row.get("warmup_started_at")) or "",
+            "health": health,
             "connect_hint": (MAIN_CONNECT_HINTS.get((email.provider or "").strip().lower(), "")
                              if inbox.main and not inbox.connected else ""),
         })
@@ -203,6 +222,7 @@ async def remove_inbox(mailbox_id: str, request: Request):
     if (await _body(request)).get("confirm") != row["address"]:
         return _refuse("Type the inbox's address to confirm: threads it started end.")
     await store.retire(row["id"])
+    await store.delete_setting(inbox_health.health_key(row["id"]))
     await store.log_action(action_type="inbox_removed", agent="you",
                            details={"inbox": row["address"]})
     return {"success": True}
@@ -279,17 +299,71 @@ def _connect_problems(env) -> dict:
 
 
 def _connect_job_view() -> dict:
-    return {k: _connect_job.get(k, "") for k in ("state", "kind", "address", "message")}
+    return {k: _connect_job.get(k, "") for k in ("state", "kind", "address", "message", "id")}
 
 
 async def _test(row: dict, config, env, secrets) -> tuple[bool, str]:
-    provider = build_provider(row, config=config, env=env, secrets=secrets)
-    if provider is None:
-        return False, "Couldn't build a connection to test."
     try:
-        return await asyncio.wait_for(provider.test_connection(), timeout=30)
+        provider = build_provider(row, config=config, env=env, secrets=secrets)
+    except SecretStoreUnavailable:
+        return False, ("The keychain is locked or unavailable, so the sign-in can't be read. "
+                       "Unlock it and check again.")
+    if provider is None:
+        return False, "Sellbird has no working connection for it on this computer."
+    try:
+        return await asyncio.wait_for(provider.test_connection(),
+                                      timeout=inbox_health.SIGN_IN_TIMEOUT)
+    except TimeoutError:
+        return False, inbox_health.NO_ANSWER
     except Exception as e:  # a network failure must not 500 the page
         return False, f"Couldn't check the connection ({type(e).__name__})."
+
+
+def _warmup_shape(email):
+    from sellbird.config import WarmupConfig
+    shape = getattr(email, "warmup", None)
+    return shape if isinstance(shape, WarmupConfig) else WarmupConfig()
+
+
+async def _test_main(config, env) -> tuple[bool, str]:
+    from sellbird.integrations.mail_provider import get_mail_provider
+    try:
+        provider = get_mail_provider(config, env)
+        return await asyncio.wait_for(provider.test_connection(),
+                                      timeout=inbox_health.SIGN_IN_TIMEOUT)
+    except TimeoutError:
+        return False, inbox_health.NO_ANSWER
+    except Exception as e:  # a network failure must not 500 the page
+        return False, f"Couldn't check the connection ({type(e).__name__})."
+
+
+async def _check(store: MailboxStore, mailbox_id: str, config, env, secrets) -> dict | None:
+    """Run the full check on one inbox (`main` for the main mailbox), keep
+    the result and return it; None when there's no such inbox."""
+    from sellbird.integrations.mail_provider import NATIVE_PROVIDERS
+
+    email = config.channels.email
+    shape = _warmup_shape(email)
+    if mailbox_id == MAIN_PATH:
+        kind = (email.provider or "").strip().lower()
+        if kind not in NATIVE_PROVIDERS:
+            return None
+        result = await inbox_health.run_check(
+            lambda: _test_main(config, env),
+            address=getattr(config.persona, "email", "") or "",
+            connection="main", provider_name=kind, warmup_started=shape.start_date,
+            min_days=shape.min_days, dkim_selector=shape.dkim_selector)
+    else:
+        row = await _row(store, mailbox_id)
+        if row is None:
+            return None
+        result = await inbox_health.run_check(
+            lambda: _test(row, config, env, secrets), address=row["address"],
+            connection=row.get("connection", ""), provider_name=row.get("provider", ""),
+            warmup_started=str(row.get("warmup_started_at") or ""),
+            min_days=shape.min_days, dkim_selector=shape.dkim_selector)
+    await inbox_health.save_result(store, mailbox_id, result)
+    return result
 
 
 def _sign_in(kind: str, address: str, env, main: bool = False) -> dict | None:
@@ -325,7 +399,8 @@ async def _run_main_connect(kind: str, address: str) -> None:
         await store.init_db()
         await store.log_action(action_type="inbox_connected", agent="you",
                                details={"inbox": address or "main mailbox", "provider": kind})
-        _connect_job.update(state="connected", message="")
+        await _check(store, MAIN_PATH, config, env, _secrets())
+        _connect_job.update(state="connected", message="", id=MAIN_PATH)
     except Exception:
         logger.exception("Connecting the main mailbox failed")
         _connect_job.update(state="failed", message="Connecting failed. See the dashboard log.")
@@ -347,8 +422,9 @@ async def _run_oauth_connect(kind: str, address: str, name: str, warmup: str) ->
             address=address, display_name=name, warmup_started_at=warmup, token=token)
         await store.log_action(action_type="inbox_connected", agent="you",
                                details={"inbox": address, "provider": kind})
-        ok, detail = await _test(await store.get_mailbox(mailbox_id), config, env, secrets)
-        _connect_job.update(state="connected", message=detail if not ok else "")
+        result = await _check(store, mailbox_id, config, env, secrets) or {}
+        _connect_job.update(state="connected", message="", id=mailbox_id,
+                            verdict=result.get("verdict", ""))
     except (ConnectRefused, SecretStoreUnavailable) as e:
         _connect_job.update(state="failed", message=str(e))
     except Exception:
@@ -445,6 +521,16 @@ async def _connect_smtp(body, address, name, warmup, config, env):
                             imap_host=imap_host.strip(), imap_port=ports[1])
     store, secrets = _store(), _secrets()
     await store.init_db()
+    # Sign in before anything is saved, so a mistyped password is fixed
+    # here, not found later in a failed send. "Save anyway" skips this.
+    if body.get("save_anyway") is not True:
+        ok, detail = await _try_smtp(settings, address, name, config, env)
+        if not ok:
+            return JSONResponse({"success": False, "sign_in_failed": True,
+                                 "message": f"Sellbird couldn't sign in with these settings, so "
+                                            f"nothing was saved. {detail}",
+                                 "fix": inbox_health.FORM_SIGN_IN_FIX},
+                                status_code=400)
     try:
         mailbox_id = await connect_smtp_mailbox(store, secrets, config, address=address,
                                                 display_name=name, warmup_started_at=warmup,
@@ -453,17 +539,214 @@ async def _connect_smtp(body, address, name, warmup, config, env):
         return _refuse(str(e))
     await store.log_action(action_type="inbox_connected", agent="you",
                            details={"inbox": address, "provider": "smtp"})
-    ok, detail = await _test(await store.get_mailbox(mailbox_id), config, env, secrets)
-    return {"success": True, "address": address, "test_ok": ok, "test_detail": detail}
+    result = await _check(store, mailbox_id, config, env, secrets) or {}
+    signin = next((c for c in result.get("checks", []) if c["key"] == "signin"), {})
+    return {"success": True, "address": address, "id": mailbox_id, "health": result,
+            "test_ok": signin.get("status") == inbox_health.PASS,
+            "test_detail": signin.get("detail", "")}
+
+
+async def _try_smtp(settings, address: str, name: str, config, env) -> tuple[bool, str]:
+    """Sign in with SMTP settings that aren't saved yet (no email is sent)."""
+    from sellbird.integrations.mail_provider import MailIdentity, identity_from_config
+    from sellbird.integrations.smtp_mail import SmtpImapProvider
+
+    identity = MailIdentity(address, name or identity_from_config(config).display_name)
+    provider = SmtpImapProvider(config, env, identity=identity, smtp=settings)
+    try:
+        return await asyncio.wait_for(provider.test_connection(),
+                                      timeout=inbox_health.SIGN_IN_TIMEOUT)
+    except TimeoutError:
+        return False, inbox_health.NO_ANSWER
+    except Exception as e:  # a network failure must not 500 the page
+        return False, f"Couldn't reach the server ({type(e).__name__})."
 
 
 @router.post("/api/inboxes/{mailbox_id}/test")
 async def test_inbox(mailbox_id: str):
+    """Check connection: sign in, read the domain's DNS and the warmup, and
+    keep the result. Sends nothing."""
+    store = _store()
+    await store.init_db()
+    config, env = _config_env()
+    result = await _check(store, mailbox_id, config, env, _secrets())
+    if result is None:
+        return _refuse("No connected inbox with that id.", 404)
+    signin = next((c for c in result["checks"] if c["key"] == "signin"), {})
+    return {"success": True, "ok": signin.get("status") == inbox_health.PASS,
+            "detail": signin.get("detail", ""), "health": result}
+
+
+# ── Editing an inbox ──
+
+def _int(value, low: int, high: int) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int) or not low <= value <= high:
+        return None
+    return value
+
+
+@router.get("/api/inboxes/{mailbox_id}/settings")
+async def inbox_settings(mailbox_id: str):
+    """What the edit form shows. The password never leaves the keychain:
+    only whether one is stored."""
+    store = _store()
+    await store.init_db()
+    row = await _row(store, mailbox_id)
+    if row is None:
+        return _refuse("No connected inbox with that id. The main mailbox's settings are in "
+                       "sellbird.yaml.", 404)
+    config, _ = _config_env()
+    out = {
+        "id": row["id"], "address": row["address"], "connection": row.get("connection", ""),
+        "provider": row.get("provider", ""), "name": row.get("display_name") or "",
+        "warmup_started_at": str(row.get("warmup_started_at") or "")[:10],
+        "cap": row.get("cap_override"),
+        "default_cap": getattr(config.channels.email, "per_inbox_daily_cap", 30),
+        "max_cap": HARD_MAX_INBOX_CAP, "smtp": None, "has_password": False,
+    }
+    if row.get("connection") == "smtp":
+        from sellbird.mailboxes import _smtp_settings
+        public = _smtp_settings(row, "").public()
+        out["smtp"] = {k: public.get(k) for k in ("host", "port", "username", "imap_host",
+                                                   "imap_port")}
+        try:
+            out["has_password"] = bool(_secrets().get(smtp_ref(row["id"])))
+        except SecretStoreUnavailable:
+            out["has_password"] = False
+    return out
+
+
+@router.post("/api/inboxes/{mailbox_id}/settings")
+async def save_inbox_settings(mailbox_id: str, request: Request):
+    """Save an inbox's settings in place, then check it again. New SMTP
+    settings or a new password sign in first; when that fails nothing is
+    saved, unless the form says "save anyway"."""
+    from sellbird.integrations.smtp_mail import SmtpSettings
+    from sellbird.mailboxes import _smtp_settings
+
+    store, secrets = _store(), _secrets()
+    await store.init_db()
+    row = await _row(store, mailbox_id)
+    if row is None:
+        return _refuse("No connected inbox with that id.", 404)
+    body = await _body(request)
+    config, env = _config_env()
+
+    name = body.get("name", row.get("display_name") or "")
+    if not isinstance(name, str) or len(name) > 100 or any(c in name for c in "\r\n<>\""):
+        return _refuse("A name is up to 100 characters, on one line, without < > or \".")
+    try:
+        warmup = check_warmup_start(body.get("warmup_started", "")
+                                    if isinstance(body.get("warmup_started", ""), str) else "x")
+    except ConnectRefused as e:
+        return _refuse(str(e))
+    cap = body.get("cap")
+    if cap is not None and _int(cap, 1, HARD_MAX_INBOX_CAP) is None:
+        return _refuse(f"A cap is a whole number from 1 to {HARD_MAX_INBOX_CAP}, "
+                       "or empty for the default.")
+
+    new_settings = None
+    new_password = ""
+    if row.get("connection") == "smtp":
+        try:
+            stored_password = secrets.get(smtp_ref(row["id"])) or ""
+        except SecretStoreUnavailable as e:
+            return _refuse(str(e) or "The keychain is locked. Unlock it and try again.")
+        current = _smtp_settings(row, stored_password)
+        new_password = body.get("password") or ""
+        if not isinstance(new_password, str) or len(new_password) > 1024:
+            return _refuse("A password is up to 1024 characters.")
+        host = body.get("smtp_host", current.host)
+        imap_host = body.get("imap_host", current.imap_host) or ""
+        username = body.get("username", current.username) or ""
+        ports = (body.get("smtp_port", current.port), body.get("imap_port", current.imap_port))
+        if not isinstance(host, str) or not host.strip() or not isinstance(imap_host, str) \
+                or not isinstance(username, str):
+            return _refuse("Enter the SMTP server's host name.")
+        if any(_int(p, 1, 65535) is None for p in ports):
+            return _refuse("A port is a whole number from 1 to 65535.")
+        candidate = SmtpSettings(host=host.strip(), username=username.strip() or row["address"],
+                                 password=new_password or current.password, port=ports[0],
+                                 imap_host=imap_host.strip(), imap_port=ports[1])
+        if candidate.public() != current.public() or new_password:
+            if not candidate.password:
+                return _refuse("Enter the password (or app password) for this inbox.")
+            if body.get("save_anyway") is not True:
+                ok, detail = await _try_smtp(candidate, row["address"], name, config, env)
+                if not ok:
+                    return JSONResponse({"success": False, "sign_in_failed": True,
+                                         "message": "Sellbird couldn't sign in with these "
+                                                    f"settings, so nothing was saved. {detail}",
+                                         "fix": inbox_health.FORM_SIGN_IN_FIX},
+                                        status_code=400)
+            new_settings = candidate
+
+    if new_settings is not None:
+        if new_password:
+            try:
+                secrets.set(smtp_ref(row["id"]), new_password)
+            except SecretStoreUnavailable as e:
+                return _refuse(str(e) or "The keychain is locked. Unlock it and try again.")
+        await store.set_connection_settings(row["id"], new_settings.public())
+    await store.set_display_name(row["id"], name)
+    await store.set_warmup_start(row["id"], warmup)
+    await store.set_cap(row["id"], cap)
+    await store.log_action(action_type="inbox_edited", agent="you", details={
+        "inbox": row["address"],
+        "changed": [k for k, v in (("server", new_settings is not None and not new_password),
+                                   ("password", bool(new_password))) if v] or ["details"]})
+    result = await _check(store, row["id"], config, env, secrets) or {}
+    return {"success": True, "health": result}
+
+
+async def _run_oauth_reconnect(mailbox_id: str, kind: str, address: str) -> None:
+    config, env = _config_env()
+    try:
+        token = await asyncio.to_thread(_sign_in, kind, address, env)
+        if token is None:
+            _connect_job.update(state="failed", message=(
+                "The sign-in didn't finish, or you signed in as a different address. "
+                "The old sign-in is unchanged."))
+            return
+        store, secrets = _store(), _secrets()
+        await store.init_db()
+        secrets.set(oauth_ref(mailbox_id), keychain_token(
+            token, "Google" if kind == "gmail" else "Microsoft"))
+        await store.log_action(action_type="inbox_signed_in_again", agent="you",
+                               details={"inbox": address, "provider": kind})
+        result = await _check(store, mailbox_id, config, env, secrets) or {}
+        _connect_job.update(state="connected", message="", id=mailbox_id,
+                            verdict=result.get("verdict", ""))
+    except (TokenTooLarge, SecretStoreUnavailable) as e:
+        _connect_job.update(state="failed", message=str(e))
+    except Exception:
+        logger.exception("Signing an inbox in again failed")
+        _connect_job.update(state="failed", message="Signing in failed. See the dashboard log.")
+
+
+@router.post("/api/inboxes/{mailbox_id}/reconnect")
+async def reconnect_inbox(mailbox_id: str):
+    """Sign a Gmail or Microsoft inbox in again, as the same address. The
+    new sign-in replaces the old one in the keychain; the inbox keeps its id."""
+    global _connect_task
     store = _store()
     await store.init_db()
     row = await _row(store, mailbox_id)
     if row is None:
         return _refuse("No connected inbox with that id.", 404)
-    config, env = _config_env()
-    ok, detail = await _test(row, config, env, _secrets())
-    return {"success": True, "ok": ok, "detail": detail}
+    if row.get("connection") != "oauth" or row.get("provider") not in ("google", "microsoft"):
+        return _refuse("Only a Gmail or Microsoft inbox signs in again. Change an SMTP "
+                       "inbox's password in its settings.")
+    kind = "gmail" if row["provider"] == "google" else "microsoft"
+    _, env = _config_env()
+    problem = _connect_problem(kind, env)
+    if problem:
+        return _refuse(problem)
+    if _connect_task is not None and not _connect_task.done():
+        return _refuse("A sign-in is already open. Finish it in your browser, or wait "
+                       "five minutes for it to time out.", 409)
+    _connect_job.clear()
+    _connect_job.update(state="waiting", kind=kind, address=row["address"], message="",
+                        id=row["id"])
+    _connect_task = asyncio.create_task(_run_oauth_reconnect(row["id"], kind, row["address"]))
+    return {"success": True, "started": True, "kind": kind}

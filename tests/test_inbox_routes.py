@@ -6,7 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import sellbird.dashboard as dash
-from sellbird import inbox_routes
+from sellbird import inbox_health, inbox_routes
 from sellbird.dashboard_auth import load_or_create_token
 from sellbird.mailboxes import MailboxStore
 from sellbird.models.campaign import Campaign, EmailStep
@@ -54,7 +54,8 @@ def test_the_list_shows_every_inbox_and_no_secret(env):
     assert "mailbox:x:smtp" not in text and "smtp.side.co" not in text
     by_address = {i["address"]: i for i in data["inboxes"]}
     side = by_address["two@side.co"]
-    assert side["state"] == "sending" and side["cold_cap"] == 30 and not side["main"]
+    assert side["state"] == "not_checked" and side["health"] is None
+    assert side["cold_cap"] == 30 and not side["main"]
     assert any(i["main"] and i["id"] == "main" for i in data["inboxes"])
     assert data["several"] is True
 
@@ -137,7 +138,12 @@ def keychain(monkeypatch):
 
     async def fake_test(row, config, env, secrets):
         return True, "Signed in."
+
+    async def fake_try(settings, address, name, config, env):
+        return True, "Signed in."
     monkeypatch.setattr(inbox_routes, "_test", fake_test)
+    monkeypatch.setattr(inbox_routes, "_try_smtp", fake_try)
+    monkeypatch.setattr(inbox_health, "_dns_lines", lambda domain, selector: [])
     return backend
 
 
